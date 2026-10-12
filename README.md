@@ -2,7 +2,7 @@
 
 👉 **[在线试玩](https://nightsky5819.github.io/entropy-tide/)** · 打开即玩，无需下载
 
-![游戏截图](docs/screenshots/01-battle.png)
+![游戏截图](https://nightsky5819.github.io/entropy-tide/docs/screenshots/01-battle.png)
 
 一个**单文件、零依赖**的俯视角射击小游戏。整个游戏——图形、音效、剧情、存档——都在一个 `index.html` 里，不加载任何外部资源，不联网，双击即玩。
 
