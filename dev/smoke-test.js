@@ -103,7 +103,12 @@ for (const id of ['screen','overlayTitle','overlayMode','overlayCls','overlaySto
                   'uptitle','upsub','pickhint','finStats','finTitle','modepick','clspick',
                   'clssub','storyHead','storyBody',
                   'btnEnter','btnModeBack','btnModeNext','btnClsBack','btnStoryNext',
-                  'btnStart','btnAgain','btnMenu','btnResume','btnQuit','game']) {
+                  'btnStart','btnAgain','btnMenu','btnResume','btnQuit','game',
+                  // v1.7 存档系统
+                  'overlaySave','overlayConfirm','saveSummary','saveExportBox','saveImportBox',
+                  'saveImportFile','btnSaveExport','btnSaveCopy','btnSaveDownload','btnSaveImport',
+                  'btnSaveImportFile','btnSaveReset','btnSaveClose','confirmTitle','confirmText',
+                  'btnConfirmYes','btnConfirmNo','btnSaveTitle','btnSavePause']) {
   els[id] = makeEl(id === 'screen' ? 'canvas' : 'div');
   els[id].id = id;
 }
@@ -960,10 +965,14 @@ console.log('J5段 OK A1 保底生效：30 轮抽卡每轮都有稀有以上品�
 
 // J6 存档持久化与洗点
 neon.metaSave();
-const raw = sandbox.localStorage.getItem('entropyTideMeta');
-assert(raw && raw.indexOf('unlocked') >= 0, '天赋存档未写入 localStorage');
+const raw = sandbox.localStorage.getItem('entropyTideSave');
+assert(raw && raw.indexOf('unlocked') >= 0, '存档未写入 localStorage（entropyTideSave）');
 const parsed = JSON.parse(raw);
-assert(parsed.unlocked.A0 === true, '存档未记录已解锁节点');
+assert(parsed.version === neon.SAVE_VERSION, '存档缺少 version 字段（实际 ' + parsed.version + '）');
+assert(parsed.meta && parsed.meta.unlocked && parsed.meta.unlocked.A0 === true, '存档未记录已解锁节点');
+assert(parsed.stats && typeof parsed.stats.totalRuns === 'number', '存档应包含 stats 统计');
+assert(sandbox.localStorage.getItem('entropyTideMeta') === null &&
+  sandbox.localStorage.getItem('neonArenaBest') === null, 'v1.7 起不应再写入旧的两个 key');
 META.points = 10; META.totalEarned = 50;
 const beforeReset = META.points;
 const refundable = Object.keys(META.unlocked).reduce(function (s, id) {
@@ -1683,5 +1692,151 @@ assert(els.overlayEvent.classList.contains('hidden'), '选择后事件面板应�
 assert(G.eventState.usedEvents.indexOf(firstEventId) >= 0, '已用事件应保留在列表中');
 console.log('M7段 OK 事件房状态机：开启 → 3 选项 → 选择后自动进入升级（不替代升级）');
 
-console.log('ALL PASS (' + frames + ' 帧, 虚拟 ' + (t / 1000).toFixed(0) + ' 秒)');
-process.exit(0);
+// ============================================================
+//  N 段：v1.7 存档系统（单一 key / 版本迁移 / 导入导出 / 重置）
+// ============================================================
+const decB64 = s => Buffer.from(String(s), 'base64').toString('utf8');
+const SAVE_KEY = neon.SAVE_KEY;
+assert(SAVE_KEY === 'entropyTideSave', '存档 key 应为 entropyTideSave（实际 ' + SAVE_KEY + '）');
+assert(neon.SAVE_VERSION === 1, '存档格式版本应为 1（实际 ' + neon.SAVE_VERSION + '）');
+assert(Array.isArray(neon.LEGACY_KEYS) && neon.LEGACY_KEYS.indexOf('neonArenaBest') >= 0 &&
+  neon.LEGACY_KEYS.indexOf('entropyTideMeta') >= 0, '旧 key 清单应包含两个旧 key');
+console.log('N1段 OK 存档系统就位：key=' + SAVE_KEY + ' · 格式版本 v' + neon.SAVE_VERSION +
+  ' · 旧 key ' + neon.LEGACY_KEYS.length + ' 个');
+
+// N2 导出结构与「单文件零外部资源」
+G.p = null;                     // 无进行中的一局：统计折算不介入，直接验证存档读写本身
+G.best = 12345; META.points = 7; META.totalEarned = 21; neon.SAVE.stats.totalKills = 99;
+neon.saveGame();
+const b64 = neon.exportSave();
+assert(typeof b64 === 'string' && b64.length > 20, '导出结果应为非空字符串');
+const exported = JSON.parse(decB64(b64));
+assert(exported.version === 1, '导出的存档应带 version=1');
+assert(exported.best === 12345 && exported.meta.points === 7, '导出的存档应包含 best 与 meta');
+assert(exported.stats && typeof exported.stats.totalKills === 'number', '导出的存档应包含 stats');
+assert(typeof exported.exportedAt === 'number' && exported.exportedAt > 0, '导出的存档应带导出时间戳');
+assert(!/<script[^>]+src=|<link[^>]+href=|<img[^>]+src=/i.test(fs.readFileSync(htmlPath, 'utf8')),
+  'index.html 不得引用任何外部资源');
+console.log('N2段 OK 导出：Base64 可解、含 version/best/meta/stats/exportedAt，且 index.html 仍零外部资源');
+
+// N3 导出 -> 导入回环
+const keepB64 = b64;
+G.best = 1; META.points = 1; neon.SAVE.stats.totalKills = 1;
+const imp = neon.importSave(keepB64);
+assert(imp.ok === true, '合法存档导入应成功');
+assert(G.best === 12345, '导入后最高分应恢复（实际 ' + G.best + '）');
+assert(META.points === 7, '导入后天赋点应恢复（实际 ' + META.points + '）');
+assert(neon.SAVE.stats.totalKills === 99, '导入后总击杀应恢复（实际 ' + neon.SAVE.stats.totalKills + '）');
+assert(JSON.parse(sandbox.localStorage.getItem(SAVE_KEY)).best === 12345, '导入后应立即按当前格式回存');
+console.log('N3段 OK 导出→导入回环：最高分 / 点数 / 统计全部还原并即时回存');
+
+// N4 非法输入
+const bad = neon.importSave('这不是base64!!!');
+assert(bad.ok === false && /格式/.test(bad.reason), '非法存档应被拒绝且提示格式无效（' + bad.reason + '）');
+assert(G.best === 12345, '导入失败不应破坏本地存档');
+assert(neon.importSave('').ok === false, '空字符串应被拒绝');
+console.log('N4段 OK 非法输入被拒绝且不破坏原档：' + bad.reason);
+
+// N5 版本过高
+const tooNew = Buffer.from(JSON.stringify({ version: 999, best: 99999 }), 'utf8').toString('base64');
+const r5 = neon.importSave(tooNew);
+assert(r5.ok === false && /版本/.test(r5.reason), '更高版本的存档应被拒绝（' + r5.reason + '）');
+assert(G.best === 12345, '拒绝高版本后本地存档应保持不变');
+console.log('N5段 OK 更高版本存档被拒绝：' + r5.reason);
+
+// N6 迁移链：缺函数 -> null；补上函数 -> 逐版本升级
+assert(neon.migrateSave({ version: 0 }) === null, '缺少迁移函数时应返回 null（不硬升、不崩）');
+assert(neon.migrateSave(null) === null, 'null 输入应返回 null');
+const noVer = neon.migrateSave({ best: 5 });
+assert(noVer && noVer.version === 1 && noVer.best === 5, '没有 version 字段应视为 v1');
+neon.MIGRATIONS[1] = function (d) { d.best = (d.best || 0) + 1000; d.version = 1; return d; };
+const up = neon.migrateSave({ version: 0, best: 5 });
+assert(up && up.version === 1 && up.best === 1005, '迁移函数应被调用并逐版本升级');
+delete neon.MIGRATIONS[1];
+console.log('N6段 OK 迁移链：缺函数返回 null / 无版本号视为 v1 / 迁移函数逐版本生效');
+
+// N7 旧 key 兼容迁移
+sandbox.localStorage.removeItem(SAVE_KEY);
+sandbox.localStorage.setItem('neonArenaBest', '8888');
+sandbox.localStorage.setItem('entropyTideMeta', JSON.stringify({
+  points: 3, totalEarned: 5, endlessWavesCleared: 9, unlocked: { A0: true }, initialModule: null
+}));
+const legacy = neon.loadGame();
+assert(legacy && G.best === 8888, '旧 key 的最高分应被迁移（实际 ' + G.best + '）');
+assert(META.points === 3 && META.unlocked.A0 === true, '旧 key 的天赋树应被迁移');
+assert(sandbox.localStorage.getItem('neonArenaBest') === null, '迁移后旧 key neonArenaBest 应被清理');
+assert(sandbox.localStorage.getItem('entropyTideMeta') === null, '迁移后旧 key entropyTideMeta 应被清理');
+assert(JSON.parse(sandbox.localStorage.getItem(SAVE_KEY)).best === 8888, '迁移结果应写入新 key');
+console.log('N7段 OK 旧档无感迁移：两个旧 key 合并进 entropyTideSave 并清理');
+
+// N8 重置
+neon.resetSave();
+assert(sandbox.localStorage.getItem(SAVE_KEY) === null, '重置后应移除存档 key');
+assert(G.best === 0 && META.points === 0 && Object.keys(META.unlocked).length === 0, '重置后内存态应归零');
+assert(neon.saveSummary().totalRuns === 0 && neon.saveSummary().totalKills === 0, '重置后统计应归零');
+console.log('N8段 OK 重置存档：本地 key 移除、内存态与统计归零');
+
+// N9 开局计数与统计落盘
+neon.startGame();
+const sum9 = neon.saveSummary();
+assert(sum9.totalRuns >= 1, '开局后总局数应 +1（实际 ' + sum9.totalRuns + '）');
+const stored9 = JSON.parse(sandbox.localStorage.getItem(SAVE_KEY));
+assert(stored9.version === 1 && stored9.stats.totalRuns >= 1, '开局后应已按当前格式落盘');
+assert(typeof sum9.totalPlayTime === 'number' && sum9.totalPlayTime >= 0, '总时长应为数字');
+console.log('N9段 OK 统计落盘：开局 +1 局、格式版本写入、时长可累加');
+
+// N10 存档管理面板
+neon.showSaveScreen('title');
+assert(!els.overlaySave.classList.contains('hidden'), '存档管理面板应显示');
+assert(els.overlayTitle.classList.contains('hidden'), '存档管理打开时标题页应隐藏');
+assert(/最高分/.test(els.saveSummary.innerHTML), '面板应展示最高分等概要');
+els.btnSaveClose.click();
+assert(!els.overlayTitle.classList.contains('hidden'), '关闭存档管理应回到标题页');
+console.log('N10段 OK 存档管理面板：显示概要、关闭回标题页');
+
+// N11 复制按钮：Clipboard API 缺失 / 抛错 / Promise 被拒绝时都必须回退 execCommand，且结果如实反馈
+//     （用户实测缺陷：以前不处理 writeText() 的 Promise 拒绝，会提示「已复制」但剪贴板是空的）
+const savedClipboard = sandbox.navigator.clipboard;
+const COPY_PAYLOAD = 'SMOKE-COPY-PAYLOAD';
+els.saveExportBox.value = COPY_PAYLOAD;
+document.execCommand = function (cmd) { return cmd === 'copy'; };
+
+// (a) Clipboard API 完全不存在
+delete sandbox.navigator.clipboard;
+let execCount = 0;
+document.execCommand = function (cmd) { execCount++; return cmd === 'copy'; };
+let copyResult = null;
+neon.copyText(COPY_PAYLOAD, function (ok) { copyResult = ok; });
+assert(execCount >= 1, 'Clipboard API 缺失时未走 execCommand 回退');
+assert(copyResult === true, 'Clipboard API 缺失时的回退复制应回调 true（实际 ' + copyResult + '）');
+
+// (b) Clipboard API 同步抛错
+sandbox.navigator.clipboard = { writeText: function () { throw new Error('blocked'); } };
+execCount = 0; copyResult = null;
+neon.copyText(COPY_PAYLOAD, function (ok) { copyResult = ok; });
+assert(execCount >= 1 && copyResult === true, 'Clipboard API 抛错时应回退 execCommand');
+
+// (c) 全部失败 -> 必须回调 false，不能假装成功
+sandbox.navigator.clipboard = { writeText: function () { throw new Error('blocked'); } };
+document.execCommand = function () { return false; };
+copyResult = null;
+neon.copyText(COPY_PAYLOAD, function (ok) { copyResult = ok; });
+assert(copyResult === false, '复制彻底失败时必须回调 false（实际 ' + copyResult + '）');
+
+// (d) 异步拒绝（真实浏览器里最常见的一种失败）-> 微任务里回退
+sandbox.navigator.clipboard = { writeText: function () { return Promise.reject(new Error('NotAllowedError')); } };
+document.execCommand = function (cmd) { execCount++; return cmd === 'copy'; };
+execCount = 0; copyResult = null;
+neon.copyText(COPY_PAYLOAD, function (ok) { copyResult = ok; });
+assert(copyResult === null, '异步路径不应同步回调');
+Promise.resolve().then(function () {
+  assert(execCount >= 1, 'Clipboard API 的 Promise 被拒绝后未走 execCommand 回退');
+  assert(copyResult === true, '异步拒绝后的回退复制应回调 true（实际 ' + copyResult + '）');
+  sandbox.navigator.clipboard = savedClipboard;
+  if (savedClipboard === undefined) delete sandbox.navigator.clipboard;
+  delete document.execCommand;
+  console.log('N11段 OK 复制回退链：API 缺失 / 同步抛错 / 异步拒绝 三种情况都回退 execCommand，彻底失败时如实回调 false');
+
+  console.log('ALL PASS (' + frames + ' 帧, 虚拟 ' + (t / 1000).toFixed(0) + ' 秒)');
+  process.exit(0);
+});

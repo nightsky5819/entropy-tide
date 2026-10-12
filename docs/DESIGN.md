@@ -168,13 +168,71 @@
 
 ---
 
-## 9. 验证工具
+## 9. 存档系统与版本迁移（v1.7）
+
+### 为什么合并成一个 key
+v1.6 及以前，最高分与天赋树是两个独立的 localStorage key（`neonArenaBest` / `entropyTideMeta`），会出现「最高分写进去了、天赋点没写」这类不一致。v1.7 起统一成一个对象：
+
+```js
+localStorage['entropyTideSave'] = {
+  version: 1,                 // 存档格式版本（与游戏版本号解耦，当前游戏 v1.7 / 存档 v1）
+  best: 0,                    // 历史最高分
+  meta: { points, totalEarned, endlessWavesCleared, unlocked, initialModule },
+  stats: { totalKills, totalRuns, totalPlayTime }
+}
+```
+
+`meta` 与代码里的 `META` 是**同一个对象**（保存时直接序列化它，读档时就地改写其字段），因此全代码上百处 `META.xxx` 引用一行都不用改。统计量的**真值口径是 `SAVE.stats`**；`G` 侧只有本局的增量 `G.kills` 与 `G.runTime`，不再另存一份总数。
+
+### 兼容旧档（玩家零感知）
+首次加载若没有新 key、但存在旧的 `neonArenaBest` / `entropyTideMeta`：把两者合并成 v1 结构 → 写入新 key → 删除旧 key。
+
+### 迁移链
+```js
+var MIGRATIONS = { n: function (data) { /* v(n-1) -> v(n) */ data.version = n; return data; } };
+
+function migrateSave(data) {
+  if (typeof data.version !== 'number') data.version = 1;   // 没有版本号 = 最早的 v1
+  if (data.version > SAVE_VERSION) return null;             // 拒绝用更新的存档覆盖旧游戏
+  while (data.version < SAVE_VERSION) {
+    var next = data.version + 1;
+    var fn = MIGRATIONS[next];
+    if (typeof fn !== 'function') return null;              // 缺迁移函数：不猜、不硬升
+    try { data = fn(data); } catch (e) { return null; }     // 迁移失败宁可视为无档也不崩游戏
+    if (data.version !== next) data.version = next;         // 迁移函数漏写版本号时兜底，防死循环
+  }
+  return data;
+}
+```
+
+四条保护：**版本过高拒绝 / 缺函数拒绝 / 抛错拒绝 / 漏写版本号兜底**。迁移或解析失败时**不清理本地原档**（下次启动仍会重试），而不是把玩家数据销毁。
+
+### 导入导出
+- **导出**：`{version, best, meta, stats, exportedAt}` → JSON → **自实现的 Base64**（不用 `btoa`，避开 Latin1 编码坑；输出标准字母表 + padding，外部工具可用标准 `atob` 解回）。
+- **导入**：解码 → `JSON.parse` → `migrateSave()` → `normalizeSave()` 补齐字段 → 覆盖写入 → 立即按当前格式回存；失败返回 `{ok:false, reason}`，**不抛错、不写坏档**。
+- 粘贴容错：自动去掉换行与空格，兼容 URL-safe 字母表（`-` `_`）；`version` 非数字按 v1 处理。
+
+### 统计口径（避免重复计数）
+本局开始时的 `runBase = { kills, time }` 是快照；每次保存按 `runBase + G.kills / G.runTime` 折算，所以频繁保存不会把同一批击杀叠加两次。落盘时机：开局、清波、结算、阵亡、放弃本局、页面隐藏/关闭，以及刷新最高分时的 1.5 秒节流保存（原来是每杀一只怪就写一次 localStorage）。
+
+### UI 与二次确认
+- 入口：标题页与暂停页都有「存档管理」。
+- 面板：存档概要（最高分 / 算力点数 / 历史累计 / 总击杀 / 总局数 / 总时长 / 格式版本）+ 导出框（生成 / 复制 / 下载 `.txt`）+ 导入框（粘贴导入 / 从文件导入）+ 重置。
+- 二次确认（通用弹窗 `overlayConfirm`）：**导入覆盖**（本地已有存档时）与**重置存档**。确认文案展示的是**已落盘**的数值（`localSaveSummary()`），而不是内存里可能尚未保存的当前局最高分。
+- 局中导入/重置成功后强制回标题页，避免局内状态与存档不一致。
+- 复制：`navigator.clipboard.writeText()` 是**异步**的 —— 必须处理它返回的 Promise 被拒绝的情况，否则会「提示已复制、剪贴板其实空的」。完整回退链：Clipboard API → `execCommand('copy')`（选中可见的导出框）→ 离屏临时 textarea，**全部失败时如实提示失败**，绝不谎报成功。导出框一点即自动全选，即使脚本被禁止写剪贴板，玩家也能一键 Ctrl+C。
+
+---
+
+## 10. 验证工具
 
 `dev/` 下的脚本不需要任何第三方依赖：
 
-- **`smoke-test.js`**：桩化 DOM 与 Canvas（`vm` 模块），模拟真实帧推进，60+ 项断言、42000+ 帧。覆盖 UI 流程、状态机、位移积分、相机精度、卡池门槛、首领机制、天赋树、词缀、精英怪、事件房、卡牌回退。
-- **CDP 脚本**（`r6`–`r9` 等）：用 Chrome DevTools Protocol 在**真实浏览器**里操作，包括模拟鼠标 hover、读取计算字号、逐帧测量出现率。比 Playwright 更可靠（headless 的 virtual-time 与命名管道限制会干扰截图和 rAF）。
-- **`http-check.js`**：分别验证 `http://` 与 `file://` 两种加载方式下运行正常。
+- **`smoke-test.js`**：桩化 DOM 与 Canvas（`vm` 模块），模拟真实帧推进，70+ 项断言、42000+ 帧。覆盖 UI 流程、状态机、位移积分、相机精度、卡池门槛、首领机制、天赋树、词缀、精英怪、事件房、卡牌回退，以及 v1.7 存档系统的单一 key / 迁移链 / 导入导出 / 旧档迁移 / 重置。
+- **CDP 脚本**（`r6`–`r10` 等）：用 Chrome DevTools Protocol 在**真实浏览器**里操作，包括模拟鼠标 hover、读取计算字号、逐帧测量出现率、跨页面刷新验证持久化。比 Playwright 更可靠（headless 的 virtual-time 与命名管道限制会干扰截图和 rAF）。
+- **`r10-check.js`**（v1.7）：存档系统真机验收，18 项独立检查（导出结构、导入回环、非法输入、版本过高、迁移链、旧 key 迁移、重置、刷新持久化、二次确认弹窗、单一 key 唯一性、零外部资源）。
+- **`ui-check.js`**：在 3 种窗口尺寸下为职业页 / 剧情页 / 存档管理页 / 导入确认弹窗出图，检查矮窗口下内容不被裁切。
+- **`http-check.js`**：验证 `http://` 加载方式下运行正常（需先 `node serve.js`）。
 
 Chrome flags 用这组比较稳：
 ```
@@ -184,7 +242,7 @@ Chrome flags 用这组比较稳：
 
 ---
 
-## 10. 开发过程中修掉的问题（摘要）
+## 11. 开发过程中修掉的问题（摘要）
 
 | 问题 | 根因 | 修复 |
 |---|---|---|
@@ -203,3 +261,5 @@ Chrome flags 用这组比较稳：
 | 卡牌剥离但数值不撤 | 只删记录 | 增量逆运算（见第 3 节） |
 | `greed` 回退扣两次 | 字段同时进 `add` 和 `pendingAdd` | 这两项只由 `pendingAdd` 处理 |
 | 事件房顺延失效 | 函数被定义两次，后者覆盖 | 删除重复定义 + 定义次数自检 |
+| 「复制」提示成功但剪贴板为空 | `clipboard.writeText()` 的 Promise 被拒绝时未处理，直接返回成功 | 改为异步等待 + 拒绝后回退 `execCommand` / 离屏 textarea，失败如实提示；导出框点击自动全选 |
+| 点「从文件导入」后整页卡死（自动化里） | 原生文件选择框是模态的，会阻塞渲染进程 | CDP 侧 `Page.setInterceptFileChooserDialog` 拦截（`dev/r10-check.js`） |

@@ -31,6 +31,32 @@ const SCREENS = {
   (function(){ setTimeout(function(){ try{
     G.mode='campaign';
     startStory('prologue', showClassScreen);
+  }catch(e){ document.title='ERR '+e; } }, 200); })();`,
+  // v1.7：存档管理面板（新增最高的一个面板，最需要检查矮窗口下的可滚动性）
+  save: `
+  (function(){ setTimeout(function(){ try{
+    localStorage.setItem('entropyTideSave', JSON.stringify({
+      version:1, best:12345,
+      meta:{points:7,totalEarned:21,endlessWavesCleared:9,unlocked:{A0:true},initialModule:null},
+      stats:{totalKills:99,totalRuns:12,totalPlayTime:3600}
+    }));
+    loadGame();
+    showSaveScreen('title');
+    var box=document.getElementById('saveExportBox'); if(box) box.value=exportSave();
+  }catch(e){ document.title='ERR '+e; } }, 200); })();`,
+  // v1.7：导入覆盖二次确认弹窗
+  saveConfirm: `
+  (function(){ setTimeout(function(){ try{
+    localStorage.setItem('entropyTideSave', JSON.stringify({
+      version:1, best:777,
+      meta:{points:3,totalEarned:5,endlessWavesCleared:3,unlocked:{},initialModule:null},
+      stats:{totalKills:10,totalRuns:2,totalPlayTime:600}
+    }));
+    loadGame();
+    G.best = 24680;
+    showSaveScreen('title');
+    var box=document.getElementById('saveImportBox'); if(box) box.value=exportSave();
+    document.getElementById('btnSaveImport').click();
   }catch(e){ document.title='ERR '+e; } }, 200); })();`
 };
 
