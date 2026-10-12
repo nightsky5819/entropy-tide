@@ -78,7 +78,7 @@
 
 | 战斗 | 精英怪 |
 |---|---|
-| ![战斗](docs/screenshots/01-battle.png) | ![精英怪](docs/screenshots/02-elite-enemies.png) |
+| ![战斗](https://nightsky5819.github.io/entropy-tide/docs/screenshots/01-battle.png) | ![精英怪](docs/screenshots/02-elite-enemies.png) |
 
 | 事件房「数据裂隙」 | 局外天赋树 |
 |---|---|
