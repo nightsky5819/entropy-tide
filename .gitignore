@@ -21,3 +21,6 @@ test-output/
 # 编辑器的本地配置
 .vscode/
 .idea/
+
+# 归档原件（本地保留，不进入仓库、不随 Pages 部署）
+archive/
