@@ -78,19 +78,19 @@
 
 | 战斗 | 精英怪 |
 |---|---|
-| ![战斗](https://nightsky5819.github.io/entropy-tide/docs/screenshots/01-battle.png) | ![精英怪](docs/screenshots/02-elite-enemies.png) |
+| ![战斗](https://nightsky5819.github.io/entropy-tide/docs/screenshots/01-battle.png) | ![精英怪](https://nightsky5819.github.io/entropy-tide/docs/screenshots/02-elite-enemies.png) |
 
 | 事件房「数据裂隙」 | 局外天赋树 |
 |---|---|
-| ![事件房](docs/screenshots/03-event-room.png) | ![天赋树](docs/screenshots/04-talent-tree.png) |
+| ![事件房](https://nightsky5819.github.io/entropy-tide/docs/screenshots/03-event-room.png) | ![天赋树](https://nightsky5819.github.io/entropy-tide/docs/screenshots/04-talent-tree.png) |
 
 | 波次词缀 | 首领战 |
 |---|---|
-| ![词缀](docs/screenshots/05-wave-affixes.png) | ![首领](docs/screenshots/06-boss-fight.png) |
+| ![词缀](https://nightsky5819.github.io/entropy-tide/docs/screenshots/05-wave-affixes.png) | ![首领](https://nightsky5819.github.io/entropy-tide/docs/screenshots/06-boss-fight.png) |
 
 | 提示分道 | 收缩 + 熵蚀场地 |
 |---|---|
-| ![提示](docs/screenshots/07-notification-lanes.png) | ![收缩](docs/screenshots/08-shrink-and-erosion.png) |
+| ![提示](https://nightsky5819.github.io/entropy-tide/docs/screenshots/07-notification-lanes.png) | ![收缩](https://nightsky5819.github.io/entropy-tide/docs/screenshots/08-shrink-and-erosion.png) |
 
 ---
 
