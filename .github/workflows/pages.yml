@@ -1,0 +1,48 @@
+name: Deploy to GitHub Pages
+
+# 单文件静态站点：根目录的 index.html 就是整个游戏，
+# 直接整仓作为站点根发布（docs/ 里的截图也能一并访问）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验单文件完整性
+        run: |
+          test -f index.html || { echo "缺少 index.html"; exit 1; }
+          node --input-type=module -e "
+            import { readFileSync } from 'node:fs';
+            const html = readFileSync('index.html', 'utf8');
+            const m = html.match(/<script>([\s\S]*)<\/script>/);
+            if (!m) { console.error('未找到 <script> 块'); process.exit(1); }
+            new Function(m[1]);            // 语法校验
+            const external = /<script[^>]+src=|<link[^>]+href=|<img[^>]+src=/i;
+            if (external.test(html)) { console.error('检测到外部资源，不再是自包含单文件'); process.exit(1); }
+            console.log('index.html 校验通过：' + Math.round(html.length / 1024) + ' KB，零外部资源');
+          "
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

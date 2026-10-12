@@ -1,0 +1,17 @@
+# 仓库内统一用 LF 存储，避免 Windows/macOS/Linux 协作时整文件行尾差异
+* text=auto eol=lf
+
+# 明确标记二进制，避免被当作文本处理
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+
+# GitHub 语言统计：识别为 HTML 项目
+*.html linguist-detectable=true
+*.js   linguist-detectable=true

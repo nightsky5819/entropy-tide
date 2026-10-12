@@ -1,0 +1,23 @@
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 测试脚本产生的临时文件：Chrome 调试用 profile、截图、报告
+.chrome-*/
+chrome-profile/
+*.log
+test-output/
+*.tmp
+
+# 编辑器的本地配置
+.vscode/
+.idea/
