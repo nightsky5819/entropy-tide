@@ -605,8 +605,8 @@ console.log('E4段 OK 相机响应性：高速每帧滞后中位数 ' + medLag.t
 // ============================================================
 const UPG = neon.UPG;
 const TIERS = new Set([1, 2, 3, 4]);
-const CATS = new Set(['atk', 'def', 'eco']);
-const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 }, byCat = { atk: 0, def: 0, eco: 0 };
+const CATS = new Set(['atk', 'def', 'eco', 'weapon']);
+const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 }, byCat = { atk: 0, def: 0, eco: 0, weapon: 0 };
 for (const u of UPG) {
   if (!TIERS.has(u.tier)) { console.error('FAIL: 卡 ' + u.id + ' 品质非法 -> ' + u.tier); process.exit(1); }
   if (!CATS.has(u.cat)) { console.error('FAIL: 卡 ' + u.id + ' 类别非法 -> ' + u.cat); process.exit(1); }
@@ -618,7 +618,8 @@ for (const c of CATS) {
 }
 if (byTier[4] < 3) { console.error('FAIL: 传说卡太少（' + byTier[4] + '）'); process.exit(1); }
 console.log('F1段 OK 卡池 ' + UPG.length + ' 张 · 品质分布 普通' + byTier[1] + '/稀有' + byTier[2] +
-  '/史诗' + byTier[3] + '/传说' + byTier[4] + ' · 类别 战斗' + byCat.atk + '/防御' + byCat.def + '/发育' + byCat.eco);
+  '/史诗' + byTier[3] + '/传说' + byTier[4] + ' · 类别 战斗' + byCat.atk + '/防御' + byCat.def +
+  '/发育' + byCat.eco + '/变异' + byCat.weapon);
 
 // F2 高品质卡必须更晚出现（直接走真实抽卡路径）
 neon.startGame();
@@ -1523,12 +1524,17 @@ assert(p6.taken.length === 1, 'removeRandomTaken 应移除 1 张（实际 ' + p6
 console.log('M6段 OK 辅助函数：随机获取（限定品质）/ 共鸣 / 重写（等量+2）/ 随机移除');
 
 // M6b 卡牌回退：每张卡都要能被精确撤销（本轮新增的核心能力）
+// v1.8：把武器变异的 9 个数值字段与 5 个布尔开关一并纳入比对，否则这 14 张卡等于「没被验证过」
 const NUM_STATS = ['dmg', 'rate', 'bspeed', 'crit', 'critMul', 'pierce', 'proj', 'spread', 'homing',
   'boom', 'orbs', 'maxHp', 'dashCd', 'dashInv', 'thorns', 'lifesteal',
-  'aegis', 'speed', 'regen', 'magnet', 'dropBonus', 'bounty', 'cardSlots', 'extraPicks'];
+  'aegis', 'speed', 'regen', 'magnet', 'dropBonus', 'bounty', 'cardSlots', 'extraPicks',
+  'mutBounce', 'mutPiercePlus', 'mutBurst', 'mutHomingLight', 'mutImpact',
+  'mutCorrode', 'mutVampire', 'mutTwin', 'mutOrbit'];
+const FLAG_STATS = ['mutBoomerang', 'mutSplitShot', 'mutLinger', 'mutChain', 'mutDelay'];
 function snapshotStats(p) {
   const s = {};
   for (const k of NUM_STATS) s[k] = p[k];
+  for (const k of FLAG_STATS) s[k] = p[k];
   return s;
 }
 let undoBad = [];
@@ -1549,6 +1555,9 @@ for (const u of neon.UPG) {
     if (typeof b !== 'number') continue;
     const tol = Math.max(1e-6, Math.abs(b) * 1e-6);
     if (Math.abs(a - b) > tol) undoBad.push(u.id + ': ' + k + ' ' + b + ' -> ' + a);
+  }
+  for (const k of FLAG_STATS) {
+    if (before[k] !== after[k]) undoBad.push(u.id + ': ' + k + ' ' + before[k] + ' -> ' + after[k]);
   }
   if (p.hp > p.maxHp + 1e-6) undoBad.push(u.id + ': 生命超过上限 ' + p.hp + '/' + p.maxHp);
   if (p.hp <= 0) undoBad.push(u.id + ': 生命被回退到 0');
@@ -1577,6 +1586,9 @@ for (const u of stackCards) {
     if (typeof o !== 'number') continue;
     const tol = Math.max(1e-6, Math.abs(o) * 1e-6);
     if (Math.abs(a - o) > tol) stackBad.push(u.id + ': ' + k + ' 期望 ' + o + ' 实际 ' + a);
+  }
+  for (const k of FLAG_STATS) {
+    if (once[k] !== after[k]) stackBad.push(u.id + ': ' + k + ' 期望 ' + once[k] + ' 实际 ' + after[k]);
   }
   if (p.hp > p.maxHp + 1e-6) stackBad.push(u.id + ': 生命超上限');
 }
@@ -1793,6 +1805,335 @@ assert(/最高分/.test(els.saveSummary.innerHTML), '面板应展示最高分等
 els.btnSaveClose.click();
 assert(!els.overlayTitle.classList.contains('hidden'), '关闭存档管理应回到标题页');
 console.log('N10段 OK 存档管理面板：显示概要、关闭回标题页');
+
+// ============================================================
+//  R 段：v1.8 武器 / 攻击方式变异（14 张）
+// ============================================================
+const WM = neon.WEAPON_MUTATIONS;
+function clearWorld() {
+  G.bullets.length = 0; G.enemies.length = 0; G.marks.length = 0; G.parts.length = 0;
+  G.grid.clear();
+}
+function rebuildGrid() {
+  G.grid.clear();
+  for (let i = 0; i < G.enemies.length; i++) if (!G.enemies[i].dead) G.grid.add(G.enemies[i]);
+}
+function mkBullet(over) {
+  const b = Object.assign({
+    x: 1000, y: 800, vx: 600, vy: 0, r: 5, dmg: 100, baseDmg: 100,
+    pierce: 0, life: 1.5, maxLife: 1.5, hit: [], col: '#8ff6ff', homing: 0, trail: [], bounces: 0
+  }, over || {});
+  G.bullets.push(b);
+  return b;
+}
+function placeEnemy(x, y, hp) {
+  const e = neon.spawnEnemy('chaser', x, y);
+  if (e) { e.spawnT = 0; e.x = x; e.y = y; e.hp = hp; e.maxHp = hp; }
+  rebuildGrid();                 // 直接调 updateBullets 时必须自己维护空间哈希
+  return e;
+}
+function freshPlayer() { neon.startGame(); clearWorld(); return G.p; }
+
+// R1 卡表 / 冲突表 / 互斥组完整性
+{
+  assert(WM.length === 14, '武器变异卡应为 14 张（实际 ' + WM.length + '）');
+  assert(neon.UPG.filter(function (u) { return u.cat === 'weapon'; }).length === 14, '14 张变异卡应已并入 UPG');
+  const ids = {};
+  const bad = [];
+  for (const u of WM) {
+    if (ids[u.id]) bad.push('重复 id ' + u.id);
+    ids[u.id] = 1;
+    if (u.tier > 3) bad.push(u.id + ' 品质超过 3');
+    if (u.cat !== 'weapon') bad.push(u.id + ' 类别不是 weapon');
+    if (typeof u.fn !== 'function' || !u.ds || !u.ico || !u.nm || !(u.max >= 1)) bad.push(u.id + ' 字段缺失/非法');
+  }
+  for (const cf of neon.WEAPON_CONFLICTS) {
+    for (const id of cf) if (!neon.UPG.some(function (u) { return u.id === id; })) bad.push('冲突表引用了不存在的卡 ' + id);
+  }
+  for (const g of neon.WEAPON_EXCLUSIVE) {
+    for (const id of g.ids) if (!neon.UPG.some(function (u) { return u.id === id; })) bad.push('互斥组引用了不存在的卡 ' + id);
+  }
+  assert(bad.length === 0, '变异卡表有问题：' + bad.join(' | '));
+  console.log('R1段 OK 变异卡 14 张（品质 ≤ 史诗）· 成对冲突 ' + neon.WEAPON_CONFLICTS.length +
+    ' 组 · 类目上限 ' + neon.WEAPON_EXCLUSIVE.length + ' 组');
+}
+
+// R2 抽取过滤：成对冲突双向生效 + 类目上限
+{
+  function seenWith(taken, rounds) {
+    const seen = new Set();
+    for (let i = 0; i < rounds; i++) {
+      const p = freshPlayer();
+      p.taken = taken.slice(); p.takenDelta = [];
+      G.wave = 20;                       // 解锁全部品质门槛
+      for (const u of neon.drawUpgradeOptions(p, 4)) seen.add(u.id);
+    }
+    return seen;
+  }
+  const bad = [];
+  const s1 = seenWith(['boomerang'], 60);
+  if (s1.has('bounce')) bad.push('回旋弹在场仍抽到弹射');
+  const s2 = seenWith(['bounce'], 60);
+  if (s2.has('boomerang')) bad.push('弹射在场仍抽到回旋弹（应双向）');
+  const s3 = seenWith(['twin'], 60);
+  if (s3.has('orbit') || s3.has('delay')) bad.push('机制重构类上限失效');
+  const s4 = seenWith(['boomerang', 'linger'], 60);
+  if (s4.has('bounce')) bad.push('弹道类上限失效（已选 2 张仍抽到弹射）');
+  const s5 = seenWith(['homing'], 60);
+  if (s5.has('homing_light')) bad.push('制导芯片在场仍抽到索敌弹');
+  const s6 = seenWith(['homing_light'], 60);
+  if (s6.has('homing')) bad.push('索敌弹在场仍抽到制导芯片（应双向）');
+  const s7 = seenWith(['proj'], 60);
+  if (s7.has('twin')) bad.push('多重射击在场仍抽到双管齐发');
+  const s8 = seenWith(['corrode'], 60);
+  if (s8.has('delay')) bad.push('腐蚀弹在场仍抽到延迟引爆');
+  assert(bad.length === 0, '抽取过滤有误：' + bad.join(' | '));
+  console.log('R2段 OK 抽取过滤：8 组冲突/上限场景各 60 轮 240 张，违规 0 次');
+}
+
+// R3 回旋弹：行程过半折返、伤害 ×0.7、清空命中记录
+{
+  const p = freshPlayer();
+  p.mutBoomerang = true;
+  const b = mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, life: 1.5, maxLife: 1.5 });
+  b.hit.push({ fake: 1 });
+  for (let i = 0; i < 50; i++) neon.updateBullets(1 / 60);   // 0.83s，life 剩 0.67
+  assert(b.returning === true, '回旋弹未进入返程态');
+  assert(b.vx < 0, '返程速度未反向（vx=' + b.vx.toFixed(1) + '）');
+  assert(Math.abs(b.dmg - 70) < 1e-6, '返程伤害应为 70%（实际 ' + b.dmg + '）');
+  assert(b.hit.length === 0, '返程应清空命中记录以允许二次命中');
+  console.log('R3段 OK 回旋弹：life 过半折返 · 速度反向 · 伤害 ×0.7 · 命中记录清空');
+}
+
+// R4 分裂弹：命中生成 3 颗小弹（伤害 40%、射程 60%），且小弹不再继续分裂
+{
+  const p = freshPlayer();
+  p.mutSplitShot = true;
+  const e = placeEnemy(1010, 800, 5000);
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0 });
+  neon.updateBullets(1 / 60);
+  const kids = G.bullets.filter(function (x) { return x.splitChild; });
+  assert(kids.length === 3, '分裂弹应生成 3 颗小弹（实际 ' + kids.length + '）');
+  assert(kids.every(function (k) { return Math.abs(k.dmg - 40) < 1e-6; }), '小弹伤害应为 40%');
+  assert(kids.every(function (k) { return Math.abs(k.life - 0.9) < 1e-6; }), '小弹射程应为 0.9s（60%）');
+  assert(e.hp < 5000, '分裂弹本体应造成伤害');
+  const before = G.bullets.length;
+  const kid = kids[0];
+  kid.hit = []; kid.x = e.x; kid.y = e.y;
+  neon.updateBullets(1 / 60);
+  assert(G.bullets.length <= before + 1, '小弹不应继续分裂（防止子弹爆炸式增长）');
+  console.log('R4段 OK 分裂弹：命中生成 3 颗小弹（伤害 40% / 射程 60%），小弹不再二次分裂');
+}
+
+// R5 弹射：撞墙反弹最多 2 次，每次伤害 -15%
+{
+  const p = freshPlayer();
+  p.mutBounce = 2;
+  const b = mkBullet({ x: 6, y: 800, vx: -600, vy: 0, dmg: 100, baseDmg: 100, life: 9, maxLife: 9, bounces: 2 });
+  neon.updateBullets(1 / 60);
+  assert(b.bounces === 1, '首次撞墙后应剩 1 次弹射（实际 ' + b.bounces + '）');
+  assert(b.vx > 0, '撞墙后应反向（vx=' + b.vx.toFixed(1) + '）');
+  assert(Math.abs(b.dmg - 85) < 1e-6, '首次反弹伤害应 -15%（实际 ' + b.dmg + '）');
+  b.x = 6; b.vx = -600;
+  neon.updateBullets(1 / 60);
+  assert(b.bounces === 0 && Math.abs(b.dmg - 72.25) < 1e-6, '第二次反弹应再 -15%（bounces=' + b.bounces + ' dmg=' + b.dmg + '）');
+  b.x = 6; b.vx = -600;
+  for (let i = 0; i < 6 && G.bullets.indexOf(b) !== -1; i++) neon.updateBullets(1 / 60);
+  assert(G.bullets.indexOf(b) === -1, '弹射次数用尽后再撞墙应销毁');
+  console.log('R5段 OK 弹射：2 次撞墙反弹 · 每次伤害 ×0.85 · 用尽后正常销毁');
+}
+
+// R6 滞留：寿命耗尽转静止力场 1 秒，持续伤害后消失
+{
+  const p = freshPlayer();
+  p.mutLinger = true;
+  const e = placeEnemy(1030, 800, 5000);
+  const b = mkBullet({ x: 1000, y: 800, vx: 0, vy: 0, life: 0.01, maxLife: 1.5 });
+  neon.updateBullets(1 / 60);
+  assert(b.lingering === true, '寿命耗尽后应转为滞留态');
+  assert(b.vx === 0 && b.vy === 0, '滞留态应静止');
+  const hp0 = e.hp;
+  for (let i = 0; i < 40; i++) neon.updateBullets(1 / 60);   // 0.67s
+  assert(e.hp < hp0, '滞留未持续造成范围伤害');
+  assert(G.bullets.indexOf(b) !== -1, '滞留 1 秒内不应消失');
+  for (let i = 0; i < 30; i++) neon.updateBullets(1 / 60);
+  assert(G.bullets.indexOf(b) === -1, '滞留 1 秒后应销毁');
+  console.log('R6段 OK 滞留：静止力场 1 秒 · 持续伤害（' + Math.round(hp0 - e.hp) + ' 点）· 到时销毁');
+}
+
+// R7 链式：命中后跃向 220 内最近敌人（50% 伤害）并产生电弧
+{
+  const p = freshPlayer();
+  p.mutChain = true;
+  const eA = placeEnemy(1010, 800, 5000);
+  const eB = placeEnemy(1010 + 150, 800, 5000);
+  placeEnemy(1010 + 900, 800, 5000);            // 远处的第三个敌人不该被跳到
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 100, baseDmg: 100 });
+  neon.updateBullets(1 / 60);
+  assert(eA.hp < 5000, '链式：首个敌人应受伤');
+  assert(Math.abs(eB.hp - (5000 - 50)) < 1e-6, '链式伤害应为 50%（实际 ' + (5000 - eB.hp) + '）');
+  assert(G.marks.length === 1, '链式电弧未记录到 G.marks（' + G.marks.length + '）');
+  console.log('R7段 OK 链式：跃向 150px 处敌人造成 50% 伤害 · 电弧特效已记录');
+}
+
+// R8 穿透+：穿透不衰减，每穿透 +5%（受 25% 上限约束）
+{
+  const p = freshPlayer();
+  p.mutPiercePlus = 1;
+  const e1 = placeEnemy(1005, 800, 5000);
+  const e2 = placeEnemy(1050, 800, 5000);
+  const e3 = placeEnemy(1095, 800, 5000);
+  const b = mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 100, baseDmg: 100, pierce: 3, life: 9, maxLife: 9 });
+  for (let i = 0; i < 60 && (b.pierceStack || 0) < 3; i++) neon.updateBullets(1 / 240);
+  assert(b.pierceStack === 3, '应穿透命中 3 个敌人（实际 ' + b.pierceStack + '）');
+  assert(Math.abs(b.dmg - 115) < 1e-6, '3 层穿透加成后伤害应为 115（实际 ' + b.dmg + '）');
+  assert(b.pierce === 0, '穿透次数应被消耗（实际 ' + b.pierce + '）');
+  const b2 = mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 100, baseDmg: 100, pierce: 9, life: 9, maxLife: 9 });
+  b2.pierceStack = 9;                            // 直接构造第 10 次穿透，验证 25% 上限
+  b2.x = e1.x; b2.y = e1.y; b2.hit = [];
+  neon.updateBullets(1 / 240);
+  assert(Math.abs(b2.dmg - 125) < 1e-6, '穿透加成上限应为 +25%（实际 ' + b2.dmg + '）');
+  console.log('R8段 OK 穿透+：每穿透 +5%（100 → 115）· 上限 +25%（125）· 穿透次数正常消耗');
+}
+
+// R9 爆裂弹：命中时小型爆炸（半径 70+10/层）
+{
+  const p = freshPlayer();
+  p.mutBurst = 1;
+  const t1 = placeEnemy(1010, 800, 5000);
+  const t2 = placeEnemy(1010 + 40, 800, 5000);
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 100, baseDmg: 100 });
+  neon.updateBullets(1 / 60);
+  assert(t1.hp < 5000, '爆裂弹本体应命中');
+  assert(t2.hp < 5000, '爆裂弹应波及半径内敌人（实际 hp=' + t2.hp + '）');
+  console.log('R9段 OK 爆裂弹：命中产生半径 80 的爆炸并波及邻近敌人');
+}
+
+// R10 索敌弹：向最近敌人偏转，且不超过 30 度/秒 × 层数
+{
+  const p = freshPlayer();
+  p.mutHomingLight = 1;
+  placeEnemy(1000, 500, 5000);                   // 上方 300px（在 460 搜索半径内）
+  const b = mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 1, baseDmg: 1, life: 9, maxLife: 9 });
+  const cur0 = Math.atan2(b.vy, b.vx);
+  for (let i = 0; i < 30; i++) neon.updateBullets(1 / 60);   // 0.5s → 最多 15 度
+  const cur1 = Math.atan2(b.vy, b.vx);
+  const turned = cur1 - cur0;
+  const maxTurn = 30 * Math.PI / 180 * 0.5;
+  assert(turned < -0.15, '索敌弹未朝目标方向偏转（转了 ' + (turned * 180 / Math.PI).toFixed(1) + ' 度）');
+  assert(Math.abs(turned) <= maxTurn + 0.02, '偏转速率超过 30 度/秒（转了 ' +
+    (Math.abs(turned) * 180 / Math.PI).toFixed(1) + ' 度 / 0.5 秒）');
+  clearWorld();                                  // 没有敌人时不应偏转
+  const b2 = mkBullet({ x: 500, y: 500, vx: 600, vy: 0, dmg: 1, baseDmg: 1, life: 9, maxLife: 9 });
+  const c0 = Math.atan2(b2.vy, b2.vx);
+  for (let i = 0; i < 30; i++) neon.updateBullets(1 / 60);
+  assert(Math.abs(Math.atan2(b2.vy, b2.vx) - c0) < 1e-9, '没有敌人时不应产生偏转');
+  console.log('R10段 OK 索敌弹：0.5 秒内向目标偏转 ' + (Math.abs(turned) * 180 / Math.PI).toFixed(1) +
+    ' 度（≤ 30 度/秒）· 无目标时不偏转');
+}
+
+// R11 冲击弹：命中击退 + 减速 0.5 秒；首领免疫
+{
+  const p = freshPlayer();
+  p.mutImpact = 2;
+  const e = placeEnemy(1010, 800, 9000);
+  e.knock = { vx: 0, vy: 0 };
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 1, baseDmg: 1 });
+  neon.updateBullets(1 / 60);
+  assert(e.knock.vx > 0, '冲击弹应沿弹道方向击退（knock.vx=' + e.knock.vx + '）');
+  assert(e.slow >= 0.5, '冲击弹应造成减速（slow=' + e.slow + '）');
+  const boss = placeEnemy(1600, 800, 9000);
+  boss.boss = true; boss.knock = { vx: 0, vy: 0 };
+  mkBullet({ x: 1590, y: 800, vx: 600, vy: 0, dmg: 1, baseDmg: 1 });
+  neon.updateBullets(1 / 60);
+  assert(Math.abs(boss.knock.vx) < 1e-9, '首领应免疫冲击弹击退（实际 ' + boss.knock.vx + '）');
+  console.log('R11段 OK 冲击弹：击退 + 减速 0.5 秒 · 首领免疫');
+}
+
+// R12 腐蚀弹：层数叠加 + 每秒 20% 持续伤害 + 3 秒后结束
+{
+  const p = freshPlayer();
+  p.mutCorrode = 2; p.dmg = 100;
+  const e = placeEnemy(1010, 800, 9000);
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 1, baseDmg: 1 });
+  neon.updateBullets(1 / 60);
+  assert(e.corrode === 2, '腐蚀层数应为 2（实际 ' + e.corrode + '）');
+  assert(Math.abs(e.corrodeT - 3) < 1e-6, '腐蚀时长应为 3 秒（实际 ' + e.corrodeT + '）');
+  const hp0 = e.hp;
+  for (let i = 0; i < 60; i++) neon.updateEnemies(1 / 60);    // 1 秒 → 2 跳
+  const dot = hp0 - e.hp;
+  assert(Math.abs(dot - 40) < 1e-6, '每秒应造成 20%×2 层 = 40 点（实际 ' + dot + '）');
+  for (let i = 0; i < 190; i++) neon.updateEnemies(1 / 60);   // 总时长超过 3 秒
+  assert(e.corrode === 0 && e.corrodeT === 0, '腐蚀应在 3 秒后结束（corrode=' + e.corrode + '）');
+  console.log('R12段 OK 腐蚀弹：2 层叠加 · 每秒 40 点持续伤害 · 3 秒后结束');
+}
+
+// R13 吸血弹：同一子弹对同一敌人只回血一次，换子弹可再触发
+{
+  const p = freshPlayer();
+  p.mutVampire = 1;
+  p.hp = 50;
+  const e = placeEnemy(1010, 800, 9000);
+  const b = mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 1, baseDmg: 1, pierce: 5, life: 9, maxLife: 9 });
+  neon.updateBullets(1 / 60);
+  assert(p.hp === 51, '命中应回复 1 点生命（实际 ' + p.hp + '）');
+  b.x = e.x - 4; b.y = e.y; b.hit = [];          // 同一子弹再次命中同一敌人
+  neon.updateBullets(1 / 600);
+  assert(p.hp === 51, '同一子弹对同一敌人不应重复回血（实际 ' + p.hp + '）');
+  b.hit = []; b.x = e.x - 4; b.y = e.y; b._uid = undefined; b._uid = 'other';
+  neon.updateBullets(1 / 600);
+  assert(p.hp === 52, '换一颗子弹命中应再次回血（实际 ' + p.hp + '）');
+  console.log('R13段 OK 吸血弹：每颗子弹对每个敌人只回血 1 次（换弹可再触发）');
+}
+
+// R14 双管齐发：整组多发、每发 65% 伤害
+{
+  const p = freshPlayer();
+  p.mutTwin = 1;
+  const proj0 = p.proj;
+  neon.fire();
+  assert(G.bullets.length === proj0 * 2, '1 层双管应发射 2 组（实际 ' + G.bullets.length + ' 发）');
+  assert(G.bullets.every(function (b) { return Math.abs(b.dmg - p.dmg * 0.65) < 1e-6; }), '每发伤害应为 65%');
+  clearWorld();
+  p.mutTwin = 2;
+  neon.fire();
+  assert(G.bullets.length === proj0 * 3, '2 层双管应发射 3 组（实际 ' + G.bullets.length + ' 发）');
+  assert(G.bullets.every(function (b) { return Math.abs(b.dmg - p.dmg * 0.4225) < 1e-6; }), '2 层每发伤害应为 0.65²');
+  console.log('R14段 OK 双管齐发：1 层 2 组×65%、2 层 3 组×0.65²（净伤害约 1.3 倍）');
+}
+
+// R15 弹幕环绕：4×层数 颗环绕子弹、跟随玩家、到期重生
+{
+  const p = freshPlayer();
+  p.mutOrbit = 1;
+  p.hp = 1e6; p.maxHp = 1e6; p.inv = 9999;      // 测试期间不被打断
+  const orbitOf = function () { return G.bullets.filter(function (b) { return b.orbitOwner === p; }); };
+  for (let i = 0; i < 130; i++) neon.step(1 / 60);     // 2.17s
+  assert(orbitOf().length === 4, '1 层应环绕 4 颗子弹（实际 ' + orbitOf().length + '）');
+  const ob = orbitOf()[0];
+  const rr = Math.sqrt(Math.pow(ob.x - p.x, 2) + Math.pow(ob.y - p.y, 2));
+  assert(Math.abs(rr - 58) < 3, '环绕半径应约为 58（实际 ' + rr.toFixed(1) + '）');
+  for (let i = 0; i < 120; i++) neon.step(1 / 60);     // 再 2 秒 → 循环重生
+  assert(orbitOf().length === 4, '重生后仍应只有 4 颗（实际 ' + orbitOf().length + '）');
+  assert(orbitOf().every(function (x) { return x.pierce === 999; }), '环绕子弹应具高穿透');
+  console.log('R15段 OK 弹幕环绕：4 颗跟随（半径 58）· 2 秒重生一批 · 不堆积');
+}
+
+// R16 延迟引爆：命中不立即造成伤害，1 秒后结算 120%
+{
+  const p = freshPlayer();
+  p.mutDelay = true;
+  const e = placeEnemy(1010, 800, 9000);
+  mkBullet({ x: 1000, y: 800, vx: 600, vy: 0, dmg: 100, baseDmg: 100 });
+  neon.updateBullets(1 / 60);
+  assert(e.hp === 9000, '延迟引爆命中时不应造成伤害（实际扣了 ' + (9000 - e.hp) + '）');
+  assert(Math.abs(e.delayMark - 120) < 1e-6, '延迟标记应为 120% 伤害（实际 ' + e.delayMark + '）');
+  assert(e.delayT > 0.9 && e.delayT <= 1.0, '引爆倒计时应为 1 秒（实际 ' + e.delayT + '）');
+  for (let i = 0; i < 70; i++) neon.updateEnemies(1 / 60);
+  assert(Math.abs((9000 - e.hp) - 120) < 1e-6, '1 秒后应结算 120 点（实际 ' + (9000 - e.hp) + '）');
+  assert(e.delayT === 0 && e.delayMark === 0, '引爆后应清空标记');
+  console.log('R16段 OK 延迟引爆：命中零伤害 → 标记 120% → 1 秒后一次性结算');
+}
 
 // N11 复制按钮：Clipboard API 缺失 / 抛错 / Promise 被拒绝时都必须回退 execCommand，且结果如实反馈
 //     （用户实测缺陷：以前不处理 writeText() 的 Promise 拒绝，会提示「已复制」但剪贴板是空的）

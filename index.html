@@ -385,7 +385,7 @@
     <div class="overlay" id="overlayTitle">
       <div class="inner">
         <h1 class="gametitle">熵&nbsp;潮</h1>
-        <p class="sub">ENTROPY TIDE · v1.7 · 索菲亚主机的最后一支杀毒协议</p>
+        <p class="sub">ENTROPY TIDE · v1.8 · 索菲亚主机的最后一支杀毒协议</p>
         <div class="tagline">你是一段没有名字的程序。<br>不需要理解敌人是什么，只需要清空每一波。</div>
         <div class="rowbuttons">
           <button id="btnEnter">开始游戏</button>
@@ -768,7 +768,8 @@
   var CAT_INFO = {
     atk: { nm: '战斗', col: '#ff8f6b', ico: '⚔' },
     def: { nm: '防御', col: '#7dffd4', ico: '⛨' },
-    eco: { nm: '发育', col: '#ffd166', ico: '✦' }
+    eco: { nm: '发育', col: '#ffd166', ico: '✦' },
+    weapon: { nm: '变异', col: '#c07dff', ico: '⁂' }   // v1.8 武器/攻击方式变异
   };
   var UPG = [
     // ---- 战斗
@@ -823,6 +824,99 @@
     { id: 'greed', ico: '✧', nm: '贪婪核心',   cat: 'eco', tier: 4, ds: '之后每波结束额外多一次强化机会', max: 3, rep: 1,
       fn: function (p) { p.extraPicks += 1; p.pendingExtra += 1; } }
   ];
+
+  // ============================================================
+  //  v1.8 武器 / 攻击方式变异（14 张）
+  //  · 与普通卡共用抽取与三选一；卡面额外显示「变异」标签（cat = 'weapon'）
+  //  · 全部 ≤ tier 3，避免挤压传说卡；数值细节见 docs/DESIGN.md 第 10 节
+  // ============================================================
+  var WEAPON_MUTATIONS = [
+    // ---- A 弹道行为
+    { id: 'boomerang', ico: '↩', nm: '回旋弹', cat: 'weapon', tier: 2, max: 1, rep: 0,
+      ds: '子弹飞到最大距离后折返，返程造成 70% 伤害（可再次命中）',
+      fn: function (p) { p.mutBoomerang = true; } },
+    { id: 'split_shot', ico: '⁂', nm: '分裂弹', cat: 'weapon', tier: 2, max: 1, rep: 0,
+      ds: '子弹命中后分裂为 3 颗小弹（伤害 40%、射程 60%）',
+      fn: function (p) { p.mutSplitShot = true; } },
+    { id: 'bounce', ico: '⇄', nm: '弹射', cat: 'weapon', tier: 2, max: 1, rep: 0,
+      ds: '子弹撞墙反弹，最多 2 次（每次反弹伤害 -15%）',
+      fn: function (p) { p.mutBounce = 2; } },
+    { id: 'linger', ico: '◉', nm: '滞留', cat: 'weapon', tier: 3, max: 1, rep: 0,
+      ds: '子弹到达最大距离后停留 1 秒，每秒造成 30% 伤害',
+      fn: function (p) { p.mutLinger = true; } },
+    { id: 'chain', ico: '⚡', nm: '链式', cat: 'weapon', tier: 3, max: 1, rep: 0,
+      ds: '命中后向最近的敌人发射闪电链（50% 伤害，跳跃 220）',
+      fn: function (p) { p.mutChain = true; } },
+    { id: 'pierce_plus', ico: '➹', nm: '穿透+', cat: 'weapon', tier: 3, max: 3, rep: 1,
+      ds: '穿透不衰减，每穿透 1 个敌人伤害 +5%（最多 +25%）',
+      fn: function (p) { p.mutPiercePlus += 1; } },
+
+    // ---- B 命中反馈
+    { id: 'burst', ico: '✷', nm: '爆裂弹', cat: 'weapon', tier: 2, max: 3, rep: 1,
+      ds: '命中时小型爆炸（半径 70+10/层，伤害 60%）',
+      fn: function (p) { p.mutBurst += 1; } },
+    { id: 'homing_light', ico: '◎', nm: '索敌弹', cat: 'weapon', tier: 2, max: 2, rep: 1,
+      ds: '子弹飞行时向最近敌人偏转（30 度/秒 × 层数）',
+      fn: function (p) { p.mutHomingLight += 1; } },
+    { id: 'impact', ico: '➤', nm: '冲击弹', cat: 'weapon', tier: 2, max: 2, rep: 1,
+      ds: '命中时击退敌人并减速 0.5 秒（对首领无效）',
+      fn: function (p) { p.mutImpact += 1; } },
+    { id: 'corrode', ico: '☣', nm: '腐蚀弹', cat: 'weapon', tier: 3, max: 3, rep: 1,
+      ds: '命中后施加腐蚀：每秒 20% 伤害，持续 3 秒（可叠加）',
+      fn: function (p) { p.mutCorrode += 1; } },
+    { id: 'vampire', ico: '⧗', nm: '吸血弹', cat: 'weapon', tier: 3, max: 2, rep: 1,
+      ds: '命中时回复 1 点生命（同一子弹对同一敌人只触发一次）',
+      fn: function (p) { p.mutVampire += 1; } },
+
+    // ---- C 机制重构
+    { id: 'twin', ico: '⁛', nm: '双管齐发', cat: 'weapon', tier: 2, max: 2, rep: 1,
+      ds: '每次射击多发射 1 发，每发伤害 ×0.65（净伤害约 1.3 倍）',
+      fn: function (p) { p.mutTwin += 1; } },
+    { id: 'orbit', ico: '◍', nm: '弹幕环绕', cat: 'weapon', tier: 3, max: 2, rep: 1,
+      ds: '玩家周围环绕 4 颗子弹，每 2 秒重生一批（高穿透、接触伤害）',
+      fn: function (p) { p.mutOrbit += 1; } },
+    { id: 'delay', ico: '⏱', nm: '延迟引爆', cat: 'weapon', tier: 3, max: 1, rep: 0,
+      ds: '命中时不造成伤害，标记敌人 1 秒后引爆，造成 120% 伤害',
+      fn: function (p) { p.mutDelay = true; } }
+  ];
+
+  // 冲突对（互斥，抽到一边另一边不再出现；对成对的普通卡同样生效）
+  var WEAPON_CONFLICTS = [
+    ['boomerang', 'bounce'],     // 两者都改弹道轨迹
+    ['linger', 'chain'],         // 滞留与链式的命中逻辑冲突
+    ['delay', 'corrode'],        // 延迟与持续伤害的时间逻辑冲突
+    ['homing_light', 'homing'],  // 索敌弹 + 制导芯片过于精准
+    ['twin', 'proj']             // 双管齐发 + 多重射击弹数爆炸
+  ];
+  // 类目上限：同一组内最多选 N 张
+  var WEAPON_EXCLUSIVE = [
+    { ids: ['boomerang', 'bounce', 'linger'], max: 2 },   // 弹道类最多 2
+    { ids: ['twin', 'orbit', 'delay'], max: 1 }           // 机制重构类最多 1
+  ];
+
+  // 合并进主卡池：与普通卡共用抽取、品质门槛与三选一
+  UPG = UPG.concat(WEAPON_MUTATIONS);
+
+  // 抽取过滤：冲突对 + 类目上限（对普通卡也生效，保证双向互斥）
+  function upgradeBlocked(p, u) {
+    if (!p || !p.taken || !p.taken.length || !u) return false;
+    for (var i = 0; i < WEAPON_CONFLICTS.length; i++) {
+      var cf = WEAPON_CONFLICTS[i];
+      if (cf[0] === u.id && p.taken.indexOf(cf[1]) !== -1) return true;
+      if (cf[1] === u.id && p.taken.indexOf(cf[0]) !== -1) return true;
+    }
+    if (u.cat !== 'weapon') return false;
+    for (var g = 0; g < WEAPON_EXCLUSIVE.length; g++) {
+      var grp = WEAPON_EXCLUSIVE[g];
+      if (grp.ids.indexOf(u.id) < 0) continue;
+      var cnt = 0;
+      for (var k = 0; k < grp.ids.length; k++) {
+        if (p.taken.indexOf(grp.ids[k]) !== -1) cnt++;
+      }
+      if (cnt >= grp.max) return true;
+    }
+    return false;
+  }
 
   // ============================================================
   //  卡牌效果的「可回退」应用
@@ -2242,7 +2336,11 @@
       scoreMul: 1,             // 极限压缩：本局分数倍率
       dashCd: 0, dashCdMax: 1.45, dashInv: 0.34, dashT: 0, inv: 0, hitFlash: 0,
       aim: -Math.PI / 2, fireT: 0, orbA: 0, omniA: 0, omniT: 0, omniInt: 1.6, trailT: 0, kills: 0,
-      taken: [], takenDelta: [], dashGhosts: []
+      taken: [], takenDelta: [], dashGhosts: [],
+      // v1.8 武器变异（每局内状态，不进存档 → 不涉及存档迁移）
+      mutBoomerang: false, mutSplitShot: false, mutBounce: 0, mutLinger: false, mutChain: false,
+      mutPiercePlus: 0, mutBurst: 0, mutHomingLight: 0, mutImpact: 0, mutCorrode: 0, mutVampire: 0,
+      mutTwin: 0, mutOrbit: 0, mutDelay: false, orbitT: 0, orbitBase: 0
     };
     // 职业修正
     p.hp *= cls.hp; p.maxHp = p.hp;
@@ -2717,6 +2815,33 @@
       var slowMul = 1;
       if (e.slow > 0) { e.slow -= dt; slowMul = 0.68; }
 
+      // ---- v1.8 腐蚀：每秒 20% 玩家伤害 × 层数（按 0.5 秒一跳，每跳 10%）
+      if (e.corrode > 0) {
+        e.corrodeT -= dt;
+        e.corrodeTick = (e.corrodeTick || 0) - dt;
+        if (e.corrodeTick <= 0) {
+          e.corrodeTick = 0.5;
+          damageEnemy(e, (p.dmg || 13) * 0.1 * e.corrode, false, e);
+        }
+        if (e.corrodeT <= 0) { e.corrode = 0; e.corrodeT = 0; }
+      }
+      // ---- v1.8 延迟引爆：1 秒后一次性结算并爆炸
+      if (e.delayT > 0) {
+        if (e.delayFlash > 0) e.delayFlash = Math.max(0, e.delayFlash - dt * 2);
+        e.delayT -= dt;
+        if (e.delayT <= 0) {
+          var dMark = e.delayMark || 0;
+          e.delayMark = 0;
+          e.delayT = 0;
+          e.delayFlash = 0;
+          if (dMark > 0) {
+            damageEnemy(e, dMark, false, e);
+            spawnParts(e.x, e.y, 16, '#ffd166', 280, 0.5, 3);
+          }
+        }
+      }
+      if (e.dead) continue;
+
       // ---- 精英词缀的持续效果
       if (e.elite && !e.boss) {
         updateEliteAffix(e, dt, p);
@@ -3054,16 +3179,24 @@
     var p = G.p;
     var n = p.proj;
     var spread = p.spread;
-    for (var i = 0; i < n; i++) {
-      var off = n === 1 ? 0 : (i - (n - 1) / 2) * spread;
-      var a = p.aim + off + rand(-0.018, 0.018);
-      var sp = p.bspeed * rand(0.97, 1.03);
-      G.bullets.push({
-        x: p.x + Math.cos(p.aim) * 18, y: p.y + Math.sin(p.aim) * 18,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        r: 5, dmg: p.dmg, pierce: p.pierce, life: 1.5,
-        hit: [], col: '#8ff6ff', homing: p.homing, trail: []
-      });
+    // v1.8 双管齐发：每层 +1 发整组齐射，每发伤害 ×0.65^层数（净伤害约 1.3 倍）
+    var twinShots = 1 + (p.mutTwin || 0);
+    var twinMul = p.mutTwin ? Math.pow(0.65, p.mutTwin) : 1;
+    for (var t = 0; t < twinShots; t++) {
+      var groupOff = twinShots > 1 ? (t - (twinShots - 1) / 2) * 0.055 : 0;
+      for (var i = 0; i < n; i++) {
+        var off = (n === 1 ? 0 : (i - (n - 1) / 2) * spread) + groupOff;
+        var a = p.aim + off + rand(-0.018, 0.018);
+        var sp = p.bspeed * rand(0.97, 1.03);
+        G.bullets.push({
+          x: p.x + Math.cos(p.aim) * 18, y: p.y + Math.sin(p.aim) * 18,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          r: 5, dmg: p.dmg * twinMul, baseDmg: p.dmg * twinMul,
+          pierce: p.pierce, life: 1.5, maxLife: 1.5,
+          hit: [], col: '#8ff6ff', homing: p.homing, trail: [],
+          bounces: p.mutBounce || 0
+        });
+      }
     }
     // 守望者：周期性脉冲环（放在 fire() 里会被开火节奏牵制，这里只负责发射）
     if (p.omni > 0 && p.omniT <= 0) {
@@ -3074,8 +3207,8 @@
         G.bullets.push({
           x: p.x + Math.cos(oa) * 16, y: p.y + Math.sin(oa) * 16,
           vx: Math.cos(oa) * 760, vy: Math.sin(oa) * 760,
-          r: 6, dmg: p.dmg * p.omni, pierce: 1, life: 0.75,
-          hit: [], col: '#ffd166', homing: 0, trail: [], omni: 1
+          r: 6, dmg: p.dmg * p.omni, baseDmg: p.dmg * p.omni, pierce: 1, life: 0.75, maxLife: 0.75,
+          hit: [], col: '#ffd166', homing: 0, trail: [], omni: 1, bounces: p.mutBounce || 0
         });
       }
       p.omniA += 0.42;
@@ -3088,12 +3221,80 @@
     Audio_.shoot();
   }
 
+  // v1.8：链式电弧特效（存进 G.marks，由 render() 绘制）
+  function chainArc(from, to) {
+    G.marks.push({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, life: 0.2, max: 0.2 });
+  }
+
   function updateBullets(dt) {
     var p = G.p;
     for (var i = G.bullets.length - 1; i >= 0; i--) {
       var b = G.bullets[i];
+
+      // ---- 滞留态（v1.8）：不移动，每 0.25 秒对周围造成一次伤害
+      if (b.lingering) {
+        b.lingerT -= dt;
+        b.lingerTick -= dt;
+        if (b.lingerTick <= 0) {
+          b.lingerTick = 0.25;
+          for (var li = 0; li < G.enemies.length; li++) {
+            var le = G.enemies[li];
+            if (le.dead) continue;
+            if (dist(le, b) < 60 + le.r) damageEnemy(le, b.dmg * 0.075, false, b);
+          }
+        }
+        if (b.lingerT <= 0) { G.bullets.splice(i, 1); continue; }
+        continue;
+      }
+
       b.life -= dt;
-      if (b.life <= 0) { G.bullets.splice(i, 1); continue; }
+      if (b.life <= 0) {
+        // 滞留：寿命耗尽不销毁，转为静止力场 1 秒
+        if (p.mutLinger) {
+          b.lingering = true;
+          b.lingerT = 1.0;
+          b.lingerTick = 0;
+          b.vx = 0; b.vy = 0;
+          b.hit = [];
+          b.trail.length = 0;
+          b.col = '#c07dff';
+          spawnParts(b.x, b.y, 6, '#c07dff', 140, 0.3, 2.4);
+          continue;
+        }
+        G.bullets.splice(i, 1); continue;
+      }
+
+      // ---- 回旋弹（v1.8）：行程过半后折返，伤害 ×0.7 且清空命中记录以允许二次命中
+      if (p.mutBoomerang && !b.returning && b.life <= (b.maxLife || 1.5) * 0.5) {
+        b.returning = true;
+        b.vx = -b.vx; b.vy = -b.vy;
+        b.dmg *= 0.7;
+        b.hit = [];
+        b.col = '#c07dff';
+        spawnParts(b.x, b.y, 6, '#c07dff', 160, 0.3, 2.4);
+      }
+
+      // ---- 索敌弹（v1.8）：向最近敌人偏转 30 度/秒 × 层数
+      if (p.mutHomingLight > 0) {
+        var hlT = null, hlD = 460;
+        for (var hk = 0; hk < G.enemies.length; hk++) {
+          var he = G.enemies[hk];
+          if (he.dead || b.hit.indexOf(he) !== -1) continue;
+          var hd = dist(he, b);
+          if (hd < hlD) { hlD = hd; hlT = he; }
+        }
+        if (hlT) {
+          var hw = angTo(b, hlT);
+          var hc = Math.atan2(b.vy, b.vx);
+          var hdf = hw - hc;
+          while (hdf > Math.PI) hdf -= TAU;
+          while (hdf < -Math.PI) hdf += TAU;
+          var hmax = 30 * Math.PI / 180 * p.mutHomingLight * dt;
+          var hna = hc + clamp(hdf, -hmax, hmax);
+          var hsp = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+          b.vx = Math.cos(hna) * hsp; b.vy = Math.sin(hna) * hsp;
+        }
+      }
 
       if (b.homing > 0) {
         var best = null, bd = 460;
@@ -3120,7 +3321,23 @@
       if (b.trail.length > 6) b.trail.splice(0, 2);
 
       b.x += b.vx * dt; b.y += b.vy * dt;
-      if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) { G.bullets.splice(i, 1); continue; }
+
+      // ---- 弹射（v1.8）：撞墙反弹，最多 b.bounces 次，每次伤害 -15%
+      if (b.bounces > 0) {
+        var bounced = false;
+        if (b.x < 0) { b.x = 0; b.vx = -b.vx; bounced = true; }
+        else if (b.x > W) { b.x = W; b.vx = -b.vx; bounced = true; }
+        if (b.y < 0) { b.y = 0; b.vy = -b.vy; bounced = true; }
+        else if (b.y > H) { b.y = H; b.vy = -b.vy; bounced = true; }
+        if (bounced) {
+          b.bounces--;
+          b.dmg *= 0.85;
+          b.hit = [];
+          spawnParts(b.x, b.y, 5, '#8ff6ff', 150, 0.25, 2.4);
+        }
+      } else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
+        G.bullets.splice(i, 1); continue;
+      }
 
       var near = G.grid.queryRect(b.x - 26, b.y - 26, b.x + 26, b.y + 26, G.vis);
       for (var j = 0; j < near.length; j++) {
@@ -3129,15 +3346,80 @@
         var rr = en.r + b.r;
         var dx = b.x - en.x, dy = b.y - en.y;
         if (dx * dx + dy * dy <= rr * rr) {
+          // ---- 延迟引爆（v1.8）：命中不立即造成伤害，累积到 1 秒后统一引爆
+          if (p.mutDelay) {
+            en.delayMark = (en.delayMark || 0) + b.dmg * 1.2;
+            if (!(en.delayT > 0)) en.delayT = 1.0;
+            en.delayFlash = 1;
+            b.hit.push(en);
+            spawnParts(b.x, b.y, 4, '#c07dff', 150, 0.25, 2.2);
+            if (b.pierce > 0) {
+              if (!(talentHas('T2') && Math.random() < 0.05)) b.pierce--;
+            } else { G.bullets.splice(i, 1); break; }
+            continue;
+          }
           var crit = Math.random() < p.crit;
           var dmg = b.dmg * (crit ? p.critMul : 1);
           // 处决协议：残血目标双倍伤害
           if (p.exec && en.hp / en.maxHp < 0.25) dmg *= 2;
           damageEnemy(en, dmg, crit, b);
+          // ---- 命中反馈（v1.8）
+          if (p.mutBurst > 0) explode(b.x, b.y, 70 + p.mutBurst * 10, dmg * 0.6, '#ffd166');
+          if (p.mutChain && !b.chainFired) {
+            b.chainFired = true;
+            var chT = null, chD = 220;
+            for (var ck = 0; ck < G.enemies.length; ck++) {
+              var ce = G.enemies[ck];
+              if (ce.dead || ce === en) continue;
+              var cd2 = dist(ce, en);
+              if (cd2 < chD) { chD = cd2; chT = ce; }
+            }
+            if (chT) {
+              damageEnemy(chT, b.dmg * 0.5, false, b);
+              chainArc(en, chT);
+              Audio_.tone(880, 420, 0.1, 'square', 0.045);
+            }
+          }
+          if (p.mutImpact > 0 && en.knock && !en.boss) {
+            var ia = angTo(b, en);
+            en.knock.vx += Math.cos(ia) * 180 * p.mutImpact;
+            en.knock.vy += Math.sin(ia) * 180 * p.mutImpact;
+            en.slow = Math.max(en.slow || 0, 0.5);
+          }
+          if (p.mutCorrode > 0) {
+            en.corrode = (en.corrode || 0) + p.mutCorrode;
+            en.corrodeT = 3.0;
+          }
+          if (p.mutVampire > 0) {
+            if (!en._vampHit) en._vampHit = {};
+            if (!b._uid) b._uid = 'b' + Math.floor(Math.random() * 1e9);
+            if (!en._vampHit[b._uid]) {
+              en._vampHit[b._uid] = 1;
+              p.hp = Math.min(p.maxHp, p.hp + 1 * p.mutVampire);
+            }
+          }
+          if (p.mutSplitShot && !b.splitChild) {
+            for (var sp3 = 0; sp3 < 3; sp3++) {
+              var sA = Math.random() * TAU;
+              G.bullets.push({
+                x: b.x, y: b.y,
+                vx: Math.cos(sA) * 700, vy: Math.sin(sA) * 700,
+                r: 3, dmg: b.dmg * 0.4, baseDmg: b.dmg * 0.4, pierce: 0,
+                life: 0.9, maxLife: 0.9, hit: [], col: '#8ff6ff',
+                homing: 0, trail: [], bounces: 0, splitChild: true
+              });
+            }
+          }
           spawnParts(b.x, b.y, 5, '#ffffff', 190, 0.25, 2.6);
           Audio_.hit();
           b.hit.push(en);
           if (b.pierce > 0) {
+            // 穿透+（v1.8）：穿透不再衰减，每穿透 1 个敌人伤害 +5%（上限 +25%）
+            if (p.mutPiercePlus > 0) {
+              b.pierceStack = (b.pierceStack || 0) + 1;
+              var pBonus = Math.min(0.25, b.pierceStack * 0.05 * p.mutPiercePlus);
+              b.dmg = (b.baseDmg || b.dmg) * (1 + pBonus);
+            }
             // 局外天赋「算力巅峰 T2」：5% 概率不消耗穿透次数
             if (!(talentHas('T2') && Math.random() < 0.05)) b.pierce--;
           } else { G.bullets.splice(i, 1); break; }
@@ -3395,6 +3677,7 @@
         if ((TIER_GATE[u.tier] || 0) > wave) continue;
         if (countUpg(p, u.id) >= u.max) continue;
         if (u.rep === 0 && countUpg(p, u.id) > 0) continue;
+        if (upgradeBlocked(p, u)) continue;      // v1.8 冲突对 / 类目上限
         if (opts.indexOf(u) !== -1) continue;   // 同一轮不重复
         pool.push(u);
       }
@@ -3429,6 +3712,7 @@
           if ((TIER_GATE[hu.tier] || 0) > wave) continue;
           if (countUpg(p, hu.id) >= hu.max) continue;
           if (hu.rep === 0 && countUpg(p, hu.id) > 0) continue;
+          if (upgradeBlocked(p, hu)) continue;   // v1.8 保底池同样遵守冲突规则
           if (opts.indexOf(hu) !== -1) continue;
           highPool.push(hu);
         }
@@ -3623,6 +3907,36 @@
     }
     wctx.restore();
 
+    // v1.8 链式电弧：命中后跃向最近敌人的闪电
+    if (G.marks.length > 0) {
+      wctx.save();
+      wctx.globalCompositeOperation = 'lighter';
+      wctx.lineCap = 'round';
+      for (var mk = 0; mk < G.marks.length; mk++) {
+        var ma = G.marks[mk];
+        var mf = clamp(ma.life / ma.max, 0, 1);
+        var mdx = ma.x2 - ma.x1, mdy = ma.y2 - ma.y1;
+        var mlen = Math.max(1, Math.sqrt(mdx * mdx + mdy * mdy));
+        var mpx = -mdy / mlen, mpy = mdx / mlen;         // 垂直方向，用来抖动
+        wctx.globalAlpha = mf * 0.9;
+        wctx.strokeStyle = '#c07dff';
+        wctx.lineWidth = 2 + mf * 1.6;
+        wctx.beginPath();
+        wctx.moveTo(ma.x1, ma.y1);
+        for (var sg = 1; sg <= 6; sg++) {
+          var sf = sg / 6;
+          var jit = (sg === 6) ? 0 : Math.sin(sf * 21 + mk * 3 + G.time * 40) * 9;
+          wctx.lineTo(ma.x1 + mdx * sf + mpx * jit, ma.y1 + mdy * sf + mpy * jit);
+        }
+        wctx.stroke();
+        wctx.globalAlpha = mf;
+        wctx.strokeStyle = '#ffffff';
+        wctx.lineWidth = 1;
+        wctx.stroke();
+      }
+      wctx.restore();
+    }
+
     // 敌方子弹
     wctx.save();
     for (var n = 0; n < G.ebullets.length; n++) {
@@ -3796,6 +4110,18 @@
       wctx.lineWidth = 2;
       wctx.beginPath();
       wctx.arc(0, 0, r + 6, 0, TAU);
+      wctx.stroke();
+      wctx.restore();
+    }
+
+    // v1.8 延迟引爆：紫色倒计时环（剩余时间越少越亮）
+    if (e.delayT > 0) {
+      wctx.save();
+      wctx.globalAlpha = 0.45 + 0.4 * Math.sin(G.time * 18);
+      wctx.strokeStyle = '#c07dff';
+      wctx.lineWidth = 3;
+      wctx.beginPath();
+      wctx.arc(0, 0, r + 9, -Math.PI / 2, -Math.PI / 2 + TAU * clamp(e.delayT, 0, 1));
       wctx.stroke();
       wctx.restore();
     }
@@ -4583,6 +4909,36 @@
         if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 2 * dt);
       }
       p.orbA += dt * 2.3;
+      // v1.8 弹幕环绕：每 2/层数 秒重生一批，4×层数 颗，跟随玩家自转
+      if (p.mutOrbit > 0) {
+        p.orbitT = (p.orbitT || 0) + dt;
+        var orbitPer = 2.0 / p.mutOrbit;
+        if (p.orbitT >= orbitPer) {
+          p.orbitT -= orbitPer;
+          p.orbitBase = (p.orbitBase || 0) + 0.4;
+          for (var ob0 = G.bullets.length - 1; ob0 >= 0; ob0--) {
+            if (G.bullets[ob0].orbitOwner === p) G.bullets.splice(ob0, 1);   // 先清掉上一批，避免堆积
+          }
+          var oCnt = 4 * p.mutOrbit;
+          for (var oi = 0; oi < oCnt; oi++) {
+            var oa0 = p.orbitBase + oi / oCnt * TAU;
+            G.bullets.push({
+              x: p.x + Math.cos(oa0) * 58, y: p.y + Math.sin(oa0) * 58,
+              vx: 0, vy: 0, r: 6, dmg: p.dmg * 0.7, baseDmg: p.dmg * 0.7,
+              pierce: 999, life: 2.2, maxLife: 2.2, hit: [], col: '#c07dff',
+              homing: 0, trail: [], bounces: 0, orbitOwner: p, orbitA: oa0
+            });
+          }
+          spawnParts(p.x, p.y, 8, '#c07dff', 200, 0.3, 2.4);
+        }
+        for (var ob1 = 0; ob1 < G.bullets.length; ob1++) {
+          var ob = G.bullets[ob1];
+          if (ob.orbitOwner !== p) continue;
+          ob.orbitA += dt * 1.7;
+          ob.x = p.x + Math.cos(ob.orbitA) * 58;
+          ob.y = p.y + Math.sin(ob.orbitA) * 58;
+        }
+      }
       // 守望者脉冲环的计时（独立于开火输入，避免松开鼠标就停摆）
       if (p.omni > 0 && p.omniT > 0) p.omniT -= dt;
 
@@ -4603,6 +4959,12 @@
 
     updateEnemies(dt);
     updateBullets(dt);
+
+    // v1.8 链式电弧寿命
+    for (var mi = G.marks.length - 1; mi >= 0; mi--) {
+      G.marks[mi].life -= dt;
+      if (G.marks[mi].life <= 0) G.marks.splice(mi, 1);
+    }
 
     // ---- 词缀每帧结算
     if (G.affixes.list.length > 0) {
@@ -5587,6 +5949,12 @@
     resetSave: resetSave, exportSave: exportSave, importSave: importSave,
     saveSummary: saveSummary, scheduleSave: scheduleSave, showSaveScreen: showSaveScreen,
     copyText: copyText, legacyCopy: legacyCopy, localSaveSummary: localSaveSummary,
+    // v1.8：武器 / 攻击方式变异
+    WEAPON_MUTATIONS: WEAPON_MUTATIONS, WEAPON_CONFLICTS: WEAPON_CONFLICTS,
+    WEAPON_EXCLUSIVE: WEAPON_EXCLUSIVE, upgradeBlocked: upgradeBlocked, chainArc: chainArc,
+    fire: fire, updateBullets: updateBullets, updateEnemies: updateEnemies, step: step,
+    spawnParts: spawnParts, explode: explode, damageEnemy: damageEnemy,
+    renderUpgradeCards: renderUpgradeCards, chooseUpgrade: chooseUpgrade,
     overflowDiag: function () { return { talents: TALENTS.length, affixes: AFFIXES.length }; }
   };
 })();

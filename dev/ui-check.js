@@ -44,6 +44,21 @@ const SCREENS = {
     showSaveScreen('title');
     var box=document.getElementById('saveExportBox'); if(box) box.value=exportSave();
   }catch(e){ document.title='ERR '+e; } }, 200); })();`,
+  // v1.8：升级面板中的「变异」卡（检查紫色标签与卡面排版）
+  mutations: `
+  (function(){ setTimeout(function(){ try{
+    G.mode='endless';
+    G.wave=6;
+    if(!G.p) G.p = newPlayer();          // 标题页时还没有玩家对象
+    G.p.taken=[]; G.p.takenDelta=[];
+    G.options = WEAPON_MUTATIONS.filter(function(u){
+      return u.id==='boomerang'||u.id==='burst'||u.id==='orbit';
+    });
+    uptitleEl.textContent='强化选择 · 第 7 波之前';
+    renderUpgradeCards();
+    showOverlay(overlayUp);
+    canvas.parentNode.classList.add('stopped');
+  }catch(e){ document.title='ERR '+e; } }, 300); })();`,
   // v1.7：导入覆盖二次确认弹窗
   saveConfirm: `
   (function(){ setTimeout(function(){ try{
