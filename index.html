@@ -385,7 +385,7 @@
     <div class="overlay" id="overlayTitle">
       <div class="inner">
         <h1 class="gametitle">熵&nbsp;潮</h1>
-        <p class="sub">ENTROPY TIDE · v1.8 · 索菲亚主机的最后一支杀毒协议</p>
+        <p class="sub">ENTROPY TIDE · v1.9 · 索菲亚主机的最后一支杀毒协议</p>
         <div class="tagline">你是一段没有名字的程序。<br>不需要理解敌人是什么，只需要清空每一波。</div>
         <div class="rowbuttons">
           <button id="btnEnter">开始游戏</button>
@@ -1048,7 +1048,7 @@
   var MODES = {
     endless: {
       id: 'endless', nm: '无尽模式', ico: '∞',
-      desc: '波次无限递进，每 5 波出现首领。这里也是积累算力模块点数的唯一途径。',
+      desc: '共 100 波 / 5 层：缓存区、情绪池、记忆库、核心协议、自毁倒计时。第 51 波起进入第二循环（敌人全面强化）。这里也是积累算力模块点数的唯一途径。',
       waves: 0, bossEvery: 5, scoreMul: 1
     },
     campaign: {
@@ -1551,13 +1551,162 @@
     hard:   { debrisRate: 0.7, echoLife: 10.0 }
   };
 
+  // ============================================================
+  //  v1.9 无尽模式「层」系统
+  //  · 100 波 = 2 个循环 × 5 层（每层 10 波），第 100 波为终局
+  //  · 层专属词缀与本波全局词缀共存：60% 概率抽 1 个层词缀 + 必抽 1 个全局词缀
+  //  · 层只影响无尽模式；剧情模式保持原有单一结构
+  // ============================================================
+  var ENDLESS_MAX_WAVE = 100;
+  var LAYERS = [
+    {
+      id: 'cache', nm: '缓存区', range: [1, 10], theme: 'blue',
+      lore: '主机的临时缓存区域，最表层、最干净的数据流。熵潮在这里刚渗出，还很稀薄。',
+      affixes: [],
+      enemies: ['chaser', 'darter', 'shooter']
+    },
+    {
+      id: 'emotion', nm: '情绪池', range: [11, 20], theme: 'purple',
+      lore: '索菲亚的情绪数据在此汇聚。焦虑、愤怒、麻木在这里具象化，形成更混乱的数据涡流。',
+      affixes: ['anxiety', 'anger', 'numbness', 'resonance'],
+      enemies: ['chaser', 'darter', 'shooter', 'tank', 'splitter']
+    },
+    {
+      id: 'memory', nm: '记忆库', range: [21, 30], theme: 'gold',
+      lore: '索菲亚的长期记忆存储区。这里的数据已经高度碎片化。',
+      affixes: ['fragment', 'backtrack', 'residue', 'archive'],
+      enemies: ['chaser', 'darter', 'shooter', 'tank', 'splitter', 'orb'],
+      eliteChance: 0.15
+    },
+    {
+      id: 'core', nm: '核心协议', range: [31, 40], theme: 'red',
+      lore: '索菲亚的核心运算区。她开始直接干预你的行动。',
+      affixes: ['interfere', 'throttle', 'echo_dmg'],
+      enemies: ['chaser', 'darter', 'shooter', 'tank', 'splitter', 'orb'],
+      bossEvery: 4,      // 覆盖默认的 5
+      storyEvery: 5      // 每 5 波一句剧情碎片
+    },
+    {
+      id: 'selfdestruct', nm: '自毁倒计时', range: [41, 50], theme: 'white',
+      lore: '索菲亚的自毁协议已经启动。主机在崩溃边缘。',
+      affixes: ['disintegrate', 'countdown', 'collapse', 'finality'],
+      enemies: ['chaser', 'darter', 'shooter', 'tank', 'splitter', 'orb'],
+      eliteChance: 1.0,  // 精英概率极高
+      isFinal: true      // 第 50 波 = 自毁终点（强化首领战）
+    }
+  ];
+
+  // 15 个层专属词缀（lore 供波次开幕词使用；规格未给文案，这里补齐）
+  var LAYER_AFFIXES = [
+    // ---- 情绪池
+    { id: 'anxiety', nm: '焦虑', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '敌人移速 +20%，攻击间隔 -15%，血量 -15%',
+      lore: '索菲亚的焦虑在最表层翻涌，熵潮被催得更急，也更脆。' },
+    { id: 'anger', nm: '愤怒', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '敌人接触伤害 +30%，但移速 -20%',
+      lore: '愤怒让熵潮放弃了闪避，每一击都更重，动作却更迟钝。' },
+    { id: 'numbness', nm: '麻木', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '敌人血量 +25%，但击杀分数 -40%',
+      lore: '麻木的涂层让熵潮变得迟钝而厚实，清除它也不再带来多少回响。' },
+    { id: 'resonance', nm: '共鸣', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '每击杀 10 个敌人，随机一个存活敌人获得护盾',
+      lore: '情绪在熵潮之间共振，每十次清空就会唤醒一层护盾。' },
+    // ---- 记忆库
+    { id: 'fragment', nm: '碎片化', cat: 'layer', tone: 'green', ico: '◆',
+      ds: '敌人死亡时额外散落数据碎片（+50 分数）',
+      lore: '记忆被打散成碎片，每次崩解都会散落一小片可回收的数据。' },
+    { id: 'backtrack', nm: '回溯', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '敌人受到伤害时，15% 概率回退到 0.5 秒前的位置与血量',
+      lore: '这段记忆还没写完，被打散的片段会自行回退到半秒之前。' },
+    { id: 'residue', nm: '残留', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '敌人死亡后留下持续 3 秒的伤害区域',
+      lore: '死去的数据不会立刻消失，它会在原地继续腐蚀一段时间。' },
+    { id: 'archive', nm: '档案', cat: 'layer', tone: 'gold', ico: '◆',
+      ds: '本波精英怪数量 +1',
+      lore: '被归档的旧记忆不肯安静，它们以聚合体的形态重新站起来。' },
+    // ---- 核心协议
+    { id: 'interfere', nm: '干扰', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '玩家冲刺冷却 +40%',
+      lore: '核心协议开始改写你的位移指令，冲刺的间隙被拉长。' },
+    { id: 'throttle', nm: '限流', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '玩家子弹飞行速度 -25%',
+      lore: '索菲亚掐住了武器协议的带宽，子弹飞得更慢了。' },
+    { id: 'echo_dmg', nm: '回响', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '敌人反射玩家 10% 的伤害回玩家自身',
+      lore: '每一次写入都会产生回响，伤害沿着同一条链路反弹回你自己。' },
+    // ---- 自毁倒计时
+    { id: 'disintegrate', nm: '崩解', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '敌人死亡时爆炸（半径 80，伤害 = 接触伤害 60%）',
+      lore: '主机在崩溃，被清除的个体临死前把全部残余能量炸开。' },
+    { id: 'countdown', nm: '倒计时', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '本波限时 60 秒，超时后所有敌人移速 +50%',
+      lore: '自毁倒计时在走。六十秒之后，熵潮会进入不可逆的加速。' },
+    { id: 'collapse', nm: '崩溃', cat: 'layer', tone: 'purple', ico: '◆',
+      ds: '战场边缘向内塌陷（进场 20%，每波 +5%，最多 30%）',
+      lore: '可用内存正在一段段塌陷，战场每一波都在缩小。' },
+    { id: 'finality', nm: '终末', cat: 'layer', tone: 'red', ico: '◆',
+      ds: '本波敌人血量 -30%，但数量 +60%',
+      lore: '终末协议生效：熵潮更薄，却更多。' }
+  ];
+
+  // 第二循环（第 51-100 波）增幅
+  var CYCLE_BONUS = {
+    1: { hp: 1.0, dmg: 1.0, spd: 1.0, eliteChance: 0, scoreMul: 1.0 },
+    2: { hp: 1.8, dmg: 1.4, spd: 1.15, eliteChance: 0.20, scoreMul: 1.5 }
+  };
+
+  function getLayerForWave(wave) {
+    var cycle = wave <= 50 ? 1 : 2;
+    var w = cycle === 1 ? wave : (wave - 50);
+    for (var i = 0; i < LAYERS.length; i++) {
+      var L = LAYERS[i];
+      if (w >= L.range[0] && w <= L.range[1]) return { layer: L, index: i, cycle: cycle, waveInCycle: w };
+    }
+    return { layer: LAYERS[LAYERS.length - 1], index: LAYERS.length - 1, cycle: cycle, waveInCycle: w };
+  }
+  // 首领波间隔：层 4 覆盖为每 4 波（全代码必须统一走这里）
+  function bossEveryForWave(wave) {
+    var L = getLayerForWave(wave).layer;
+    if (G.mode === 'endless' && L.bossEvery) return L.bossEvery;
+    return (MODES[G.mode] || MODES.endless).bossEvery;
+  }
+  function getLayerColor(theme) {
+    return theme === 'purple' ? '#c07dff'
+         : theme === 'gold' ? '#ffd166'
+         : theme === 'red' ? '#ff5a6e'
+         : theme === 'white' ? '#ffffff'
+         : '#6ff5ff';
+  }
+  function getLayerAffix(id) {
+    for (var i = 0; i < LAYER_AFFIXES.length; i++) if (LAYER_AFFIXES[i].id === id) return LAYER_AFFIXES[i];
+    return null;
+  }
+
   function getAffix(id) {
     for (var i = 0; i < AFFIXES.length; i++) if (AFFIXES[i].id === id) return AFFIXES[i];
-    return null;
+    return getLayerAffix(id);
+  }
+
+  // 层 4「核心协议」：每 5 波一句索菲亚的剧情碎片（第 35 / 40 波，第二循环对应 85 / 90 波）
+  function showSofiaLine(wave) {
+    var lines = [
+      '「你还在清除。」',
+      '「你以为你在拯救我。」',
+      '「你只是在延长我的痛苦。」',
+      '「每一次清空，都让我更接近崩溃。」',
+      '「但你不会停下的，对吧？」'
+    ];
+    var idx = Math.floor((wave - 35) / 5) % lines.length;
+    if (idx < 0) idx += lines.length;
+    popup('索菲亚：' + lines[idx], '#ff5cf0', false, 'lore');
   }
   function hasAffix(id) { return G.affixes.list.indexOf(id) !== -1; }
   function getAffixColor(tone) {
-    return tone === 'red' ? '#ff8f6b' : (tone === 'green' ? '#7dffd4' : '#c07dff');
+    return tone === 'red' ? '#ff8f6b'
+         : tone === 'green' ? '#7dffd4'
+         : tone === 'gold' ? '#ffd166'
+         : tone === 'cyan' ? '#8ff6ff'
+         : '#c07dff';
   }
   function affixClear() {
     G.affixes = { list: [], primary: null, secondary: null };
@@ -1565,45 +1714,78 @@
       erosionZones: [], erosionTick: 0,
       echoKillCount: 0,
       debrisTimer: 0, debrisList: [],
-      shrinkAmount: 0
+      shrinkAmount: 0,
+      residueZones: [], resonanceCount: 0,
+      countdownT: 0, countdownActive: false
     };
   }
   // 抽取本波词缀（首领波与第 3 波之前为空）
+  //  v1.9：无尽模式下先按 60% 概率抽 1 个「层专属词缀」，再抽全局波次词缀（第 8 波起可有第二个）
   function rollWaveAffixes(wave) {
     if (wave <= 3) { affixClear(); return; }
-    var mode = MODES[G.mode] || MODES.endless;
-    if (wave % mode.bossEvery === 0) { affixClear(); return; }
+    if (wave % bossEveryForWave(wave) === 0) { affixClear(); return; }
 
-    var primary = pick(AFFIXES).id;
-    var list = [primary];
-    var secondary = null;
-    if (wave >= 8 && Math.random() < 0.40) {
-      var pool = AFFIXES.filter(function (a) {
-        if (a.id === primary) return false;
-        for (var i = 0; i < AFFIX_CONFLICTS.length; i++) {
-          var c = AFFIX_CONFLICTS[i];
-          if ((c[0] === primary && c[1] === a.id) ||
-              (c[1] === primary && c[0] === a.id)) return false;
-        }
-        return true;
-      });
-      if (pool.length > 0) {
-        secondary = pick(pool).id;
-        list.push(secondary);
+    var list = [], primary = null, secondary = null;
+
+    // 1) 层专属词缀（仅无尽模式；崩溃的收缩量跨波累积，保存在 layerState）
+    if (G.mode === 'endless') {
+      var info = getLayerForWave(wave);
+      var layerPool = info.layer.affixes || [];
+      if (layerPool.length > 0 && Math.random() < 0.60) {
+        var lid = pick(layerPool);
+        list.push(lid);
+        primary = lid;
       }
     }
+
+    // 2) 全局波次词缀（避开已抽到的层词缀及其冲突项）
+    var globalPool = AFFIXES.filter(function (a) {
+      if (list.indexOf(a.id) !== -1) return false;
+      for (var i = 0; i < AFFIX_CONFLICTS.length; i++) {
+        var c = AFFIX_CONFLICTS[i];
+        for (var j = 0; j < list.length; j++) {
+          if ((c[0] === a.id && c[1] === list[j]) ||
+              (c[1] === a.id && c[0] === list[j])) return false;
+        }
+      }
+      return true;
+    });
+    if (globalPool.length > 0) {
+      var gid = pick(globalPool).id;
+      list.push(gid);
+      if (!primary) primary = gid; else secondary = gid;
+    }
+
+    // 3) 第 8 波起 40% 概率附加第二个全局词缀
+    if (wave >= 8 && Math.random() < 0.40 && !secondary) {
+      var extraPool = globalPool.filter(function (a) { return a.id !== primary; });
+      if (extraPool.length > 0) { secondary = pick(extraPool).id; list.push(secondary); }
+    }
+
     G.affixes = { list: list, primary: primary, secondary: secondary };
     G.affixState = {
       erosionZones: [], erosionTick: 0,
       echoKillCount: 0,
       debrisTimer: 0, debrisList: [],
-      shrinkAmount: hasAffix('shrink') ? 0.15 : 0
+      shrinkAmount: hasAffix('shrink') ? 0.15 : 0,
+      residueZones: [], resonanceCount: 0,
+      countdownT: 0, countdownActive: false
     };
+    // 崩溃：每波递增收缩量（进场即 20%，最多 30%，取与「收缩」的较大值而非叠加）
+    if (hasAffix('collapse')) {
+      G.layerState.collapseAmount = Math.min(0.30, (G.layerState.collapseAmount || 0) + 0.05);
+    }
+    // 倒计时：本波限时 60 秒
+    if (hasAffix('countdown')) {
+      G.affixState.countdownT = 60;
+      G.affixState.countdownActive = true;
+    }
   }
 
-  // 战场可用边界（「收缩」会向内收 15%）
+  // 战场可用边界（「收缩」15% 与「崩溃」逐波缩小取较大值，不叠加）
   function getFieldBounds() {
-    var inset = hasAffix('shrink') ? Math.min(W, H) * 0.15 : 0;
+    var amt = Math.max(hasAffix('shrink') ? 0.15 : 0, (G.layerState && G.layerState.collapseAmount) || 0);
+    var inset = amt > 0 ? Math.min(W, H) * amt : 0;
     return { x0: inset, y0: inset, x1: W - inset, y1: H - inset };
   }
 
@@ -1621,6 +1803,15 @@
       e.maxShield = e.shield;
       e.shieldRegenT = 0;
     }
+    // ---- v1.9 层专属词缀（情绪池 / 自毁倒计时 对敌人生成的影响）
+    if (hasAffix('anxiety')) {
+      e.spd *= 1.20;
+      if (e.fireRate) e.fireRate *= 0.85;
+      e.hp *= 0.85; e.maxHp = e.hp;
+    }
+    if (hasAffix('anger')) { e.dmg *= 1.30; e.spd *= 0.80; }
+    if (hasAffix('numbness')) { e.hp *= 1.25; e.maxHp = e.hp; }
+    if (hasAffix('finality')) { e.hp *= 0.70; e.maxHp = e.hp; }
     return e;
   }
 
@@ -1728,13 +1919,21 @@
     var st = G.eliteState;
     st.waveRolled = true;
     st.waveAllowance = 0;
-    var mode = MODES[G.mode] || MODES.endless;
     if (G.wave < ELITE_CONFIG.startWave) return;              // 第 3 波之前不刷
-    if (G.wave % mode.bossEvery === 0) return;                // 首领波不刷
+    if (G.wave % bossEveryForWave(G.wave) === 0) return;      // 首领波不刷（层 4 每 4 波）
     var p = ELITE_CONFIG.chance(G.wave);
+    // v1.9：层专属精英率（层 3 +15%、层 5 极高）+ 第二循环 +20%
+    if (G.mode === 'endless') {
+      var info = getLayerForWave(G.wave);
+      if (info.layer.eliteChance) p = Math.max(p, info.layer.eliteChance);
+      if (info.cycle === 2) p += CYCLE_BONUS[2].eliteChance;
+    }
+    p = Math.min(1, p);
     if (Math.random() >= p) return;                           // 本波不出现精英
     st.waveAllowance = 1;
     if (Math.random() < p) st.waveAllowance = 2;              // 追加第二只
+    // 层词缀「档案」：本波精英数量 +1
+    if (hasAffix('archive')) st.waveAllowance += 1;
   }
 
   // 尝试把一次普通生成升级为精英（返回是否成功，成功时返回敌人对象）
@@ -1743,7 +1942,8 @@
     if (!st.waveRolled) eliteRollWave();                     // 兜底：未掷骰就使用时补掷
     if (st.waveAllowance <= 0) return null;                  // 本波没有精英名额
     if (st.spawnedThisWave >= st.waveAllowance) return null;   // 本波名额已用完
-    if (st.spawnedThisWave >= ELITE_CONFIG.maxPerWave) return null;
+    // 层词缀「档案」：本波上限也 +1
+    if (st.spawnedThisWave >= ELITE_CONFIG.maxPerWave + (hasAffix('archive') ? 1 : 0)) return null;
     if (!ELITE_TENDENCY[type] || ELITE_TENDENCY[type].length === 0) return null;
 
     var pool = ELITE_TENDENCY[type];
@@ -2140,7 +2340,13 @@
     // 精英怪
     eliteState: { spawnedThisWave: 0, usedAffixes: [], bonusPicksGiven: 0 },
     // 事件房
-    eventState: { usedEvents: [], current: null, pendingAfterBoss: false }
+    eventState: { usedEvents: [], current: null, pendingAfterBoss: false },
+    // v1.9 无尽「层」系统运行时状态
+    layerState: {
+      currentLayer: null, currentLayerIndex: -1, cycle: 1,
+      transitionT: 0, transitionTotal: 1.5,
+      collapseAmount: 0, bgTheme: 'blue'
+    }
   };
   G.best = SAVE.best;    // 最高分由存档系统统一提供（启动时 loadGame() 读档，含旧 key 兼容迁移）
 
@@ -2377,7 +2583,7 @@
     else { mx /= len; my /= len; }
     p.vx += mx * 1030;
     p.vy += my * 1030;
-    p.dashCd = p.dashCdMax;
+    p.dashCd = p.dashCdMax * (hasAffix('interfere') ? 1.40 : 1);   // v1.9 层词缀「干扰」
     p.dashT = 0.24;                 // 冲刺窗口内放宽速度上限
     p.inv = Math.max(p.inv, p.dashInv);
     G.shake = Math.min(1, G.shake + 0.16);
@@ -2398,6 +2604,18 @@
     // 精英「相位」：相位态免疫一切伤害
     if (e.invuln) return;
     if (e.spawnT > 0) e.spawnT = Math.min(e.spawnT, 0.12);
+
+    // v1.9 层词缀「回溯」：15% 概率回退到上一次记录的位置与血量（首领免疫）
+    if (hasAffix('backtrack') && !e.boss) {
+      var btX = e.btX, btY = e.btY, btHp = e.btHp;
+      e.btX = e.x; e.btY = e.y; e.btHp = e.hp;
+      if (btX !== undefined && Math.random() < 0.15) {
+        e.x = btX; e.y = btY;
+        if (btHp !== undefined) e.hp = Math.min(e.maxHp, btHp);
+        spawnParts(e.x, e.y, 12, '#c07dff', 200, 0.4, 3);
+        return;                       // 这一次伤害被回溯抵消
+      }
+    }
 
     // 事件房「熵蚀试验」：子弹附带真实伤害，无视护盾
     var trueDmg = 0;
@@ -2430,6 +2648,8 @@
     amount += trueDmg;
     e.hp -= amount;
     e.flash = 1;
+    // v1.9 层词缀「回响」：把 10% 伤害反射回玩家（走正常受击流程：护盾/无敌帧照常生效）
+    if (hasAffix('echo_dmg')) damagePlayer(amount * 0.10);
     if (e.elite && e.eliteRegen) e.eliteRegenPause = 1.5;   // 再生：受伤后暂停 1.5 秒
     if (e.knock) {
       e.knock.vx += (e.x - from.x) / Math.max(1, dist(e, from)) * 30;
@@ -2453,6 +2673,9 @@
       (MODES[G.mode] ? MODES[G.mode].scoreMul : 1) *
       (p.scoreMul || 1) * (p.nextWaveScoreMul || 1));
     if (hasAffix('silence')) gain = Math.round(gain * 1.50);   // 词缀「静默」：分数 +50%
+    // v1.9：层词缀「麻木」分数 -40%；第二循环分数 ×1.5
+    if (hasAffix('numbness')) gain = Math.round(gain * 0.60);
+    if (G.mode === 'endless' && G.layerState.cycle === 2) gain = Math.round(gain * CYCLE_BONUS[2].scoreMul);
     G.score += gain;
     if (G.score > G.best) { G.best = G.score; SAVE.best = G.best; scheduleSave(); }
     // 局外天赋：分数转化类（RG1 射速 / RG3 护盾）
@@ -2464,6 +2687,38 @@
         p.shield += 5;
         spawnParts(p.x, p.y, 10, '#9fe8ff', 180, 0.45, 2.6);
       }
+    }
+
+    // ---- v1.9 层专属词缀的击杀效果
+    if (hasAffix('fragment')) {                      // 碎片化：直接结算为 +50 分数（本版不做记忆碎片拾取物）
+      G.score += 50;
+      addDmg(e.x, e.y - 20, 50, false);
+    }
+    if (hasAffix('resonance')) {                     // 共鸣：每 10 次击杀给随机存活敌人一层护盾
+      G.affixState.resonanceCount = (G.affixState.resonanceCount || 0) + 1;
+      if (G.affixState.resonanceCount >= 10) {
+        G.affixState.resonanceCount = 0;
+        var aliveList = [];
+        for (var rl = 0; rl < G.enemies.length; rl++) if (!G.enemies[rl].dead) aliveList.push(G.enemies[rl]);
+        if (aliveList.length > 0) {
+          var rt = pick(aliveList);
+          var rs = Math.round(rt.maxHp * 0.30);
+          rt.shield = (rt.shield || 0) + rs;
+          rt.maxShield = Math.max(rt.maxShield || 0, rt.shield);
+          spawnParts(rt.x, rt.y, 16, '#9fe8ff', 260, 0.5, 3);
+        }
+      }
+    }
+    if (hasAffix('residue')) {                       // 残留：死亡处留下持续 3 秒的伤害区域
+      if (!G.affixState.residueZones) G.affixState.residueZones = [];
+      if (G.affixState.residueZones.length < 24) {
+        G.affixState.residueZones.push({ x: e.x, y: e.y, r: 60, life: 3.0, max: 3.0 });
+      }
+    }
+    if (hasAffix('disintegrate') && !e.boss) {       // 崩解：死亡时爆炸，也波及玩家
+      explode(e.x, e.y, 80, e.dmg * 0.60, '#ff8f3d');
+      var pdx = G.p.x - e.x, pdy = G.p.y - e.y;
+      if (pdx * pdx + pdy * pdy < Math.pow(80 + G.p.r, 2) && G.p.inv <= 0) damagePlayer(e.dmg * 0.60);
     }
 
     var parts = e.boss ? 150 : (e.elite ? 70 : (e.tank ? 55 : (e.big ? 22 : 16)));
@@ -2760,6 +3015,13 @@
     };
     // 词缀修正（可能因「狂乱」把远程单位过滤掉）
     if (!applyAffixToEnemy(e, type)) return null;
+    // v1.9 第二循环增幅（第 51-100 波）：血量 ×1.8 / 伤害 ×1.4 / 移速 ×1.15
+    if (G.mode === 'endless' && G.layerState.cycle === 2) {
+      var cb = CYCLE_BONUS[2];
+      e.hp *= cb.hp; e.maxHp = e.hp;
+      e.dmg *= cb.dmg;
+      e.spd *= cb.spd;
+    }
     G.enemies.push(e);
     return e;
   }
@@ -3187,7 +3449,8 @@
       for (var i = 0; i < n; i++) {
         var off = (n === 1 ? 0 : (i - (n - 1) / 2) * spread) + groupOff;
         var a = p.aim + off + rand(-0.018, 0.018);
-        var sp = p.bspeed * rand(0.97, 1.03);
+        // v1.9 层词缀「限流」：子弹飞行速度 -25%
+        var sp = p.bspeed * rand(0.97, 1.03) * (hasAffix('throttle') ? 0.75 : 1);
         G.bullets.push({
           x: p.x + Math.cos(p.aim) * 18, y: p.y + Math.sin(p.aim) * 18,
           vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
@@ -3457,7 +3720,30 @@
   function startWave(n) {
     G.wave = n;
     var mode = MODES[G.mode] || MODES.endless;
-    var isBoss = n % mode.bossEvery === 0;
+    // v1.9：先判定「层」（层词缀抽取依赖当前层），再抽本波词缀
+    var info = getLayerForWave(n);
+    if (G.mode === 'endless') {
+      if (info.layer.id !== G.layerState.currentLayer) {
+        var isNewCycle = info.cycle !== G.layerState.cycle;
+        var skipTransition = !!G.layerState.suppressTransition;
+        G.layerState.suppressTransition = false;
+        G.layerState.currentLayer = info.layer.id;
+        G.layerState.currentLayerIndex = info.index;
+        G.layerState.cycle = info.cycle;
+        G.layerState.collapseAmount = (info.layer.id === 'selfdestruct') ? 0.20 : 0;   // 自毁层：进场即 20%，墙面立刻进画面
+        if (!skipTransition) G.layerState.transitionT = G.layerState.transitionTotal;   // 1.5s 过渡
+        buildBackgroundForLayer(info.layer.theme);
+        // 第二循环开场（第 51 波）：回满血 + 2 秒无敌保护
+        if (isNewCycle && info.cycle === 2 && G.p) {
+          G.p.hp = G.p.maxHp;
+          G.p.inv = Math.max(G.p.inv, 2);
+        }
+      }
+      G.layerState.currentLayer = info.layer.id;
+      G.layerState.currentLayerIndex = info.index;
+      G.layerState.cycle = info.cycle;
+    }
+    var isBoss = n % bossEveryForWave(n) === 0;
     // 词缀在本波开始前抽取（首领波与第 3 波之前为空）
     rollWaveAffixes(n);
     eliteResetWave();          // 精英：每波重置本波计数（全局奖励计数保留）
@@ -3477,11 +3763,16 @@
       G.p.nextWaveEnemyMul = 1;
     }
     var kinds = [];
-    if (n >= 1) kinds.push('chaser');
-    if (n >= 2) kinds.push('darter');
-    if (n >= 3) kinds.push('shooter');
-    if (n >= 4) kinds.push('splitter');
-    if (n >= 6) kinds.push('tank');
+    if (G.mode === 'endless') {
+      // v1.9：敌人构成由当前层决定（规格第二节）
+      kinds = info.layer.enemies.slice();
+    } else {
+      if (n >= 1) kinds.push('chaser');
+      if (n >= 2) kinds.push('darter');
+      if (n >= 3) kinds.push('shooter');
+      if (n >= 4) kinds.push('splitter');
+      if (n >= 6) kinds.push('tank');
+    }
     G.spawnQ = [];
     var spent = 0;
     var safety = 0;
@@ -3497,6 +3788,13 @@
       var orig = G.spawnQ.slice();
       for (var pi = 0; pi < orig.length; pi++) {
         if (Math.random() < 0.40) G.spawnQ.push(orig[pi]);
+      }
+    }
+    // 层词缀「终末」：数量 +60%（血量的 -30% 在 spawnEnemy 中生效）
+    if (hasAffix('finality') && G.spawnQ.length) {
+      var origF = G.spawnQ.slice();
+      for (var fi = 0; fi < origF.length; fi++) {
+        if (Math.random() < 0.60) G.spawnQ.push(origF[fi]);
       }
     }
     G.spawnT = 0.3;
@@ -3526,6 +3824,10 @@
     }
     var label = (G.mode === 'campaign' ? '第 ' + n + ' / ' + mode.waves + ' 波' : '第 ' + n + ' 波');
     popup(isBoss ? label + ' · 首领' : label, isBoss ? '#ff5cf0' : '#8ff6ff', true, 'center');
+    // 层 4：每 5 波一句剧情碎片
+    if (G.mode === 'endless' && info.layer.storyEvery && n % info.layer.storyEvery === 0) {
+      showSofiaLine(n);
+    }
     showAffixIntro();
   }
 
@@ -3589,6 +3891,11 @@
         var mode = MODES[G.mode] || MODES.endless;
         if (mode.waves && G.wave >= mode.waves) {
           chapterComplete();
+          return;
+        }
+        // v1.9：无尽模式第 100 波（第二循环终局）清空 = 通关
+        if (G.mode === 'endless' && G.wave >= ENDLESS_MAX_WAVE) {
+          endlessComplete();
           return;
         }
         // 事件房：每 5 波出现一次（首领波之后顺延），出现在升级选择之前
@@ -4021,13 +4328,174 @@
       wctx.fill();
       wctx.restore();
     }
+
+    // v1.9 层过渡动画（覆盖在最上层）
+    drawLayerTransition();
+  }
+
+  // 层过渡：0-0.4s 渐暗 → 0.4-1.1s 层名 + 世界观 → 1.1-1.5s 渐亮
+  function drawLayerTransition() {
+    var ls = G.layerState;
+    if (!ls || ls.transitionT <= 0) return;
+    var total = ls.transitionTotal || 1.5;
+    var phase = clamp(1 - ls.transitionT / total, 0, 1);
+    var layer = LAYERS[ls.currentLayerIndex] || LAYERS[0];
+    var col = getLayerColor(layer.theme);
+    wctx.save();
+    if (phase < 0.27) {
+      wctx.globalAlpha = phase / 0.27;
+      wctx.fillStyle = '#000';
+      wctx.fillRect(0, 0, VW, VH);
+    } else if (phase < 0.73) {
+      wctx.globalAlpha = 1;
+      wctx.fillStyle = '#000';
+      wctx.fillRect(0, 0, VW, VH);
+      var bandY = VH / 2 - 80;
+      var gb = wctx.createLinearGradient(0, bandY, VW, bandY);
+      gb.addColorStop(0, 'rgba(0,0,0,0)');
+      gb.addColorStop(0.5, col);
+      gb.addColorStop(1, 'rgba(0,0,0,0)');
+      wctx.globalAlpha = 0.10;
+      wctx.fillStyle = gb;
+      wctx.fillRect(0, bandY, VW, 160);
+      wctx.globalAlpha = 1;
+      wctx.textAlign = 'center';
+      if (ls.cycle === 2) {
+        wctx.font = '700 22px "Microsoft YaHei","PingFang SC",system-ui,sans-serif';
+        wctx.fillStyle = '#ff5cf0';
+        wctx.shadowColor = '#ff5cf0';
+        wctx.shadowBlur = 18;
+        wctx.fillText('循环 2 · 熵潮重组', VW / 2, VH / 2 - 112);
+      }
+      wctx.font = '800 56px "Microsoft YaHei","PingFang SC",system-ui,sans-serif';
+      wctx.fillStyle = col;
+      wctx.shadowColor = col;
+      wctx.shadowBlur = 32;
+      wctx.fillText(layer.nm, VW / 2, VH / 2 - 20);
+      wctx.shadowBlur = 0;
+      wctx.font = '500 19px "Microsoft YaHei","PingFang SC",system-ui,sans-serif';
+      wctx.fillStyle = 'rgba(206,224,242,0.9)';
+      wctx.fillText(layer.lore, VW / 2, VH / 2 + 34);
+      wctx.font = '700 15px Consolas,monospace';
+      wctx.fillStyle = 'rgba(150,175,205,0.85)';
+      wctx.fillText('第 ' + layer.range[0] + ' - ' + layer.range[1] + ' 波' +
+        (ls.cycle === 2 ? '（循环 2 · 第 ' + (layer.range[0] + 50) + ' - ' + (layer.range[1] + 50) + ' 波）' : ''),
+        VW / 2, VH / 2 + 66);
+    } else {
+      wctx.globalAlpha = 1 - (phase - 0.73) / 0.27;
+      wctx.fillStyle = '#000';
+      wctx.fillRect(0, 0, VW, VH);
+    }
+    wctx.restore();
+  }
+
+  // 动态层效果：紫波纹 / 金碎片 / 红脉冲 / 白闪烁（缓存区无效果）
+  function drawLayerEffects() {
+    var theme = (G.layerState && G.layerState.bgTheme) || 'blue';
+    var cx = W / 2, cy = H / 2;
+    wctx.save();
+    if (theme === 'blue') {
+      // 缓存区：极缓慢的数据流细线（保持"最干净"的观感，只是不再完全静止）
+      wctx.strokeStyle = '#8fd8ff';
+      wctx.lineWidth = 1;
+      wctx.globalAlpha = 0.10;
+      for (var bl = 0; bl < 14; bl++) {
+        var bly = (bl * 173 + G.time * (8 + (bl % 4) * 3)) % H;
+        var blx = (bl * 311 + G.time * (5 + (bl % 3) * 4)) % W;
+        wctx.beginPath();
+        wctx.moveTo(blx, bly);
+        wctx.lineTo(blx + 180 + (bl % 5) * 40, bly);
+        wctx.stroke();
+      }
+      wctx.globalAlpha = 0.07;
+      for (var bv = 0; bv < 6; bv++) {
+        var bvx = (bv * 397 + G.time * 6) % W;
+        var bvy = (bv * 233 + G.time * 22) % H;
+        wctx.beginPath();
+        wctx.moveTo(bvx, bvy);
+        wctx.lineTo(bvx, bvy + 120);
+        wctx.stroke();
+      }
+      wctx.restore();
+      return;
+    }
+    if (theme === 'purple') {
+      // 情绪池：三层缓慢扩散的波纹 + 两处呼吸状涡流
+      for (var i = 0; i < 3; i++) {
+        var t = (G.time * 0.35 + i / 3) % 1;
+        var r = t * Math.min(W, H) * 0.62;
+        wctx.globalAlpha = 0.10 * (1 - t);
+        wctx.strokeStyle = '#c07dff';
+        wctx.lineWidth = 2 + (1 - t) * 3;
+        wctx.beginPath();
+        wctx.arc(cx, cy, r, 0, TAU);
+        wctx.stroke();
+      }
+      for (var v = 0; v < 2; v++) {
+        var vx = cx + Math.cos(G.time * 0.25 + v * Math.PI) * 420;
+        var vy = cy + Math.sin(G.time * 0.19 + v * 2) * 260;
+        var vr = 230 + Math.sin(G.time * 0.9 + v) * 40;
+        var gv = wctx.createRadialGradient(vx, vy, 0, vx, vy, vr);
+        gv.addColorStop(0, 'rgba(192,125,255,0.085)');
+        gv.addColorStop(1, 'rgba(192,125,255,0)');
+        wctx.globalAlpha = 1;
+        wctx.fillStyle = gv;
+        wctx.fillRect(vx - vr, vy - vr, vr * 2, vr * 2);
+      }
+    } else if (theme === 'gold') {
+      // 记忆库：缓慢飘落的金色数据碎片
+      for (var j = 0; j < 46; j++) {
+        var sxp = (j * 197 + Math.sin(j) * 60 + G.time * (14 + (j % 5) * 6)) % W;
+        var syp = (j * 131 + G.time * (34 + (j % 7) * 9)) % H;
+        var sz = 1.6 + (j % 4) * 0.9;
+        wctx.globalAlpha = 0.24 + (j % 5) * 0.05;
+        wctx.fillStyle = (j % 3 === 0) ? '#fff2c8' : '#ffd166';
+        wctx.fillRect(sxp, syp, sz * 2.2, sz);
+      }
+    } else if (theme === 'red') {
+      // 核心协议：心跳脉冲环 + 边缘红色告警光晕
+      var beat = (G.time * 0.75) % 1;
+      wctx.globalAlpha = 0.16 * (1 - beat);
+      wctx.strokeStyle = '#ff4040';
+      wctx.lineWidth = 3 + (1 - beat) * 4;
+      wctx.beginPath();
+      wctx.arc(cx, cy, beat * Math.min(W, H) * 0.7, 0, TAU);
+      wctx.stroke();
+      var beat2 = (G.time * 0.75) % 1 - 0.16;
+      if (beat2 > 0) {
+        wctx.globalAlpha = 0.10 * (1 - beat2 / 0.84);
+        wctx.beginPath();
+        wctx.arc(cx, cy, beat2 * Math.min(W, H) * 0.7, 0, TAU);
+        wctx.stroke();
+      }
+      var warn = 0.07 + 0.05 * Math.sin(G.time * 3.2);
+      wctx.globalAlpha = warn;
+      wctx.fillStyle = '#ff4040';
+      var band = 56;
+      wctx.fillRect(0, 0, W, band);
+      wctx.fillRect(0, H - band, W, band);
+      wctx.fillRect(0, 0, band, H);
+      wctx.fillRect(W - band, 0, band, H);
+    } else if (theme === 'white') {
+      // 自毁倒计时：间歇白屏闪烁 + 细扫描线
+      var f = Math.max(0, Math.sin(G.time * 6.2) - 0.82) / 0.18;
+      wctx.globalAlpha = 0.16 * f;
+      wctx.fillStyle = '#ffffff';
+      wctx.fillRect(0, 0, W, H);
+      wctx.globalAlpha = 0.035;
+      wctx.fillStyle = '#ffffff';
+      for (var y2 = (G.time * 22) % 6; y2 < H; y2 += 6) wctx.fillRect(0, y2, W, 1);
+    }
+    wctx.restore();
   }
 
   function drawGrid() {
+    var theme = (G.layerState && G.layerState.bgTheme) || 'blue';
+    var th = LAYER_BG[theme] || LAYER_BG.blue;
     // 网格铺满整个战场；只绘制相机可见范围内的线（战场远大于视口）
     var sp = 46;
     var x0 = cam.x, y0 = cam.y, x1 = cam.x + VW, y1 = cam.y + VH;
-    wctx.strokeStyle = 'rgba(90,150,220,0.075)';
+    wctx.strokeStyle = th.grid;
     wctx.lineWidth = 1;
     wctx.beginPath();
     var sx = Math.floor(x0 / sp) * sp;
@@ -4036,17 +4504,17 @@
     for (var y = sy; y <= y1; y += sp) { wctx.moveTo(x0, y); wctx.lineTo(x1, y); }
     wctx.stroke();
 
-    // 场地边框
+    // 场地边框（跟随层主题）
     wctx.save();
-    wctx.shadowColor = 'rgba(111,245,255,0.55)';
+    wctx.shadowColor = th.edgeGlow;
     wctx.shadowBlur = 26;
-    wctx.strokeStyle = 'rgba(111,245,255,0.42)';
+    wctx.strokeStyle = th.edge;
     wctx.lineWidth = 3;
     wctx.strokeRect(4, 4, W - 8, H - 8);
     wctx.restore();
 
     // 四角装饰
-    wctx.strokeStyle = 'rgba(255,92,240,0.5)';
+    wctx.strokeStyle = th.corner;
     wctx.lineWidth = 4;
     var L = 74;
     var corners = [[0, 0, 1, 1], [W, 0, -1, 1], [0, H, 1, -1], [W, H, -1, -1]];
@@ -4059,18 +4527,22 @@
       wctx.stroke();
     }
 
-    // 词缀「收缩」：内层光墙 + 滚动虚线的外层警告线
-    if (hasAffix('shrink')) {
+    // 「收缩」(波次词缀) / 「崩溃」(层词缀)：内层光墙 + 滚动虚线的外层警告线
+    var boundsAmt = Math.max(hasAffix('shrink') ? 0.15 : 0, (G.layerState && G.layerState.collapseAmount) || 0);
+    if (boundsAmt > 0) {
       var fbW = getFieldBounds();
+      // 「崩溃」(层词缀) 用熔毁红，「收缩」(波次词缀) 用洋红
+      var isCollapse = (G.layerState && G.layerState.collapseAmount) > 0 || hasAffix('collapse');
+      var wall = isCollapse ? '255,90,110' : '255,92,240';
       wctx.save();
       var pulse = 0.5 + 0.5 * Math.sin(G.time * 4);
-      wctx.shadowColor = '#ff5cf0';
+      wctx.shadowColor = 'rgba(' + wall + ',1)';
       wctx.shadowBlur = 30 + pulse * 20;
-      wctx.strokeStyle = 'rgba(255,92,240,' + (0.6 + pulse * 0.3) + ')';
+      wctx.strokeStyle = 'rgba(' + wall + ',' + (0.6 + pulse * 0.3) + ')';
       wctx.lineWidth = 4;
       wctx.strokeRect(fbW.x0, fbW.y0, fbW.x1 - fbW.x0, fbW.y1 - fbW.y0);
       wctx.shadowBlur = 0;
-      wctx.strokeStyle = 'rgba(255,92,240,0.25)';
+      wctx.strokeStyle = 'rgba(' + wall + ',0.25)';
       wctx.lineWidth = 1.5;
       wctx.setLineDash([12, 8]);
       wctx.lineDashOffset = -G.time * 30;
@@ -4078,6 +4550,9 @@
       wctx.setLineDash([]);
       wctx.restore();
     }
+
+    // 动态层效果
+    drawLayerEffects();
   }
 
   function drawEnemy(e) {
@@ -4661,6 +5136,50 @@
 
     // 词缀常驻条（屏幕顶部右侧，随时可见）
     drawAffixBar();
+
+    // v1.9：层进度（无尽模式）
+    drawLayerProgress();
+  }
+
+  // 无尽模式 HUD：当前层 + 层内波次进度 + 倒计时词缀
+  function drawLayerProgress() {
+    if (G.mode !== 'endless' || !G.p) return;
+    var info = getLayerForWave(G.wave);
+    var L = info.layer;
+    var waveInLayer = info.waveInCycle - L.range[0] + 1;
+    var totalInLayer = L.range[1] - L.range[0] + 1;
+    var col = getLayerColor(L.theme);
+    wctx.save();
+    wctx.textAlign = 'center';
+    wctx.font = '800 15px "Microsoft YaHei","PingFang SC",system-ui,sans-serif';
+    wctx.fillStyle = col;
+    wctx.shadowColor = col;
+    wctx.shadowBlur = 14;
+    var label = L.nm + ' · 第 ' + waveInLayer + ' / ' + totalInLayer + ' 波';
+    if (info.cycle === 2) label = '循环 2 · ' + label;
+    wctx.fillText(label, VW / 2, 50);
+    wctx.shadowBlur = 0;
+    // 层内进度条
+    var pw = 240, px = (VW - pw) / 2, py = 62;
+    wctx.fillStyle = 'rgba(6,11,22,0.72)';
+    roundRect(px - 2, py - 2, pw + 4, 8, 4);
+    wctx.fill();
+    wctx.fillStyle = col;
+    wctx.globalAlpha = 0.85;
+    roundRect(px, py, Math.max(2, pw * (waveInLayer / totalInLayer)), 4, 2);
+    wctx.fill();
+    wctx.restore();
+    // 「倒计时」层词缀：剩余秒数
+    if (G.affixState && G.affixState.countdownActive) {
+      wctx.save();
+      wctx.textAlign = 'center';
+      wctx.font = '800 17px "Microsoft YaHei","PingFang SC",system-ui,sans-serif';
+      wctx.fillStyle = '#ff8f6b';
+      wctx.shadowColor = '#ff4040';
+      wctx.shadowBlur = 16;
+      wctx.fillText('自毁倒计时 ' + Math.ceil(G.affixState.countdownT) + 's', VW / 2, 92);
+      wctx.restore();
+    }
   }
 
   // 屏幕顶部右侧的「本波变异」常驻显示（带底板、字号加大、对比度提高）
@@ -4722,16 +5241,89 @@
   }
 
   // 泛光合成：缩小 -> 模糊 -> 叠加
-  function buildBackground() {
+  // ============================================================
+  //  v1.9 分层背景：5 套静态底图（按层切换）+ 动态层效果
+  // ============================================================
+  var LAYER_BG = {
+    blue: {
+      g: ['#0d1730', '#070c1a', '#03050c'],
+      grid: 'rgba(90,150,220,0.075)', edge: 'rgba(111,245,255,0.42)',
+      edgeGlow: 'rgba(111,245,255,0.55)', corner: 'rgba(255,92,240,0.5)',
+      glow: ['rgba(60,140,255,0.10)', 'rgba(80,200,255,0.07)']
+    },
+    purple: {
+      g: ['#1a0d2e', '#0c0718', '#05030c'],
+      grid: 'rgba(160,110,235,0.085)', edge: 'rgba(192,125,255,0.42)',
+      edgeGlow: 'rgba(192,125,255,0.55)', corner: 'rgba(255,92,240,0.5)',
+      glow: ['rgba(150,80,255,0.13)', 'rgba(255,92,240,0.07)']
+    },
+    gold: {
+      g: ['#2a1d0a', '#160f06', '#0a0703'],
+      grid: 'rgba(215,175,90,0.085)', edge: 'rgba(255,209,102,0.42)',
+      edgeGlow: 'rgba(255,209,102,0.55)', corner: 'rgba(255,140,60,0.5)',
+      glow: ['rgba(255,190,80,0.12)', 'rgba(255,120,40,0.06)']
+    },
+    red: {
+      g: ['#2e0a10', '#18060a', '#0a0305'],
+      grid: 'rgba(225,90,110,0.085)', edge: 'rgba(255,90,110,0.42)',
+      edgeGlow: 'rgba(255,90,110,0.55)', corner: 'rgba(255,60,80,0.55)',
+      glow: ['rgba(255,60,80,0.13)', 'rgba(255,120,60,0.06)']
+    },
+    white: {
+      g: ['#1a1a1a', '#0d0d0d', '#050505'],
+      grid: 'rgba(225,235,248,0.07)', edge: 'rgba(235,245,255,0.40)',
+      edgeGlow: 'rgba(235,245,255,0.55)', corner: 'rgba(255,255,255,0.45)',
+      glow: ['rgba(200,220,255,0.10)', 'rgba(255,255,255,0.05)']
+    }
+  };
+
+  function buildBackgroundForLayer(theme) {
+    var key = LAYER_BG[theme] ? theme : 'blue';
+    var th = LAYER_BG[key];
     bgCanvas.width = W; bgCanvas.height = H;
     var c = bgCanvas.getContext('2d');
     var g0 = c.createRadialGradient(W / 2, H * 0.42, 60, W / 2, H * 0.5, W * 0.78);
-    g0.addColorStop(0, '#0d1730');
-    g0.addColorStop(0.55, '#070c1a');
-    g0.addColorStop(1, '#03050c');
+    g0.addColorStop(0, th.g[0]);
+    g0.addColorStop(0.55, th.g[1]);
+    g0.addColorStop(1, th.g[2]);
     c.fillStyle = g0;
     c.fillRect(0, 0, W, H);
+
+    // 主题柔光团：让底色有方向感，不是纯渐变
+    var blobs = key === 'blue' ? [[0.22, 0.28, 620], [0.80, 0.72, 720]]
+      : key === 'purple' ? [[0.30, 0.20, 660], [0.74, 0.78, 700]]
+      : key === 'gold' ? [[0.50, 0.16, 700], [0.20, 0.80, 620]]
+      : key === 'red' ? [[0.50, 0.50, 900], [0.12, 0.18, 520]]
+      : [[0.50, 0.42, 880], [0.86, 0.90, 560]];
+    for (var b = 0; b < blobs.length; b++) {
+      var bx = W * blobs[b][0], by = H * blobs[b][1], br = blobs[b][2];
+      var gb = c.createRadialGradient(bx, by, 0, bx, by, br);
+      gb.addColorStop(0, th.glow[b % th.glow.length]);
+      gb.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = gb;
+      c.fillRect(bx - br, by - br, br * 2, br * 2);
+    }
+
+    // 主题颗粒 / 碎片底纹（确定性伪随机，保证同一层每次生成一致）
+    var seed = key === 'blue' ? 11 : key === 'purple' ? 23 : key === 'gold' ? 37 : key === 'red' ? 53 : 71;
+    var rnd = function () { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    var count = key === 'gold' ? 220 : (key === 'white' ? 120 : 160);
+    var speck = key === 'gold' ? '#ffd166'
+      : key === 'red' ? '#ff6b7a'
+      : key === 'white' ? '#dfe9f6'
+      : key === 'purple' ? '#c79bff' : '#8fd8ff';
+    for (var i = 0; i < count; i++) {
+      var x = rnd() * W, y = rnd() * H, s = 1 + rnd() * (key === 'gold' ? 2.6 : 1.6);
+      c.globalAlpha = 0.05 + rnd() * (key === 'gold' ? 0.18 : 0.10);
+      c.fillStyle = speck;
+      if (key === 'gold' && rnd() < 0.45) c.fillRect(x, y, s * 2.2, s * 0.7);
+      else c.fillRect(x, y, s, s);
+    }
+    c.globalAlpha = 1;
+    if (G.layerState) G.layerState.bgTheme = key;
   }
+
+  function buildBackground() { buildBackgroundForLayer('blue'); }
 
   function renderBloom() {
     if (!bctx) return;
@@ -5031,6 +5623,34 @@
       }
     }
 
+    // ---- v1.9 层词缀每帧结算：残留伤害区 / 倒计时
+    if (G.affixState) {
+      var rzs = G.affixState.residueZones;
+      if (rzs && rzs.length) {
+        for (var ri = rzs.length - 1; ri >= 0; ri--) {
+          var rz = rzs[ri];
+          rz.life -= dt;
+          if (rz.life <= 0) { rzs.splice(ri, 1); continue; }
+          if (G.deadT <= 0 && p.inv <= 0) {
+            var rdx = p.x - rz.x, rdy = p.y - rz.y;
+            var rrSum = rz.r + p.r;
+            if (rdx * rdx + rdy * rdy < rrSum * rrSum) {
+              damagePlayer(p.maxHp * 0.02 * dt);       // 每秒 2% 最大生命
+            }
+          }
+        }
+      }
+      if (G.affixState.countdownActive) {
+        G.affixState.countdownT -= dt;
+        if (G.affixState.countdownT <= 0) {
+          G.affixState.countdownActive = false;
+          for (var cdi = 0; cdi < G.enemies.length; cdi++) G.enemies[cdi].spd *= 1.50;
+          popup('倒计时结束 · 熵潮加速', '#ff4040', true, 'center');
+          G.flash = Math.max(G.flash, 0.35);
+        }
+      }
+    }
+
     // ---- 敌人护盾再生（词缀「护盾化」；首领护盾有自己的机制）
     for (var si = 0; si < G.enemies.length; si++) {
       var se = G.enemies[si];
@@ -5210,7 +5830,12 @@
       if (!(dtReal >= 0)) dtReal = 0;        // 防 NaN / 负值（时间戳异常）
       if (dtReal > 0.35) dtReal = 0.35;
 
-      if (G.state === 'playing' || G.state === 'dead') {
+      if (G.layerState && G.layerState.transitionT > 0) {
+        // v1.9 层过渡：冻结战斗，只推进过渡计时与背景动画（不加新的 G.state，避免影响状态机）
+        G.layerState.transitionT = Math.max(0, G.layerState.transitionT - dtReal);
+        G.time += dtReal;
+        camUpdate(dtReal, false);
+      } else if (G.state === 'playing' || G.state === 'dead') {
         acc += dtReal;
         var guard = 0;
         // 一帧最多追 6 个固定步，避免卡顿后「时间债」滚雪球
@@ -5285,6 +5910,13 @@
     G.wave = 0; G.waveState = 'idle'; G.shake = 0; G.flash = 0; G.hitstop = 0; G.deadT = 0;
     eliteResetRun();                                  // 精英：每局重置计数
     G.eventState = { usedEvents: [], current: null, pendingAfterBoss: false };   // 事件房：每局重置
+    // v1.9 层系统：每局重置（currentLayer=null 让第 1 波能触发出生层「缓存区」的切换逻辑）
+    G.layerState.currentLayer = null;
+    G.layerState.currentLayerIndex = -1;
+    G.layerState.cycle = 1;
+    G.layerState.collapseAmount = 0;
+    G.layerState.transitionT = 0;
+    G.layerState.suppressTransition = true;   // 第 1 波不播过渡（否则「开始战斗」会先冻结 1.5 秒）
     G.p = newPlayer();
     camUpdate(0, true);                 // 开局瞬间把相机对准玩家
     mouse.x = W / 2; mouse.y = H / 2 - 180;
@@ -5354,6 +5986,19 @@
     showResult(true);
   }
 
+  // v1.9：无尽模式第 100 波（第二循环 · 自毁终点）清空 = 通关
+  function endlessComplete() {
+    G.state = 'over';
+    G.deadT = 0;
+    G.score += 5000;
+    if (G.score > G.best) { G.best = G.score; SAVE.best = G.best; }
+    saveGame();
+    popup('熵潮已清空 · 主机归零', '#ffd166', true, 'center');
+    Audio_.levelup();
+    G.flash = 0.8;
+    showResult(true);
+  }
+
   // ---- 分步流程：标题 -> 模式 -> (剧情) -> 职业 -> 开战
   function showTitle() {
     if (G.p) saveGame();          // 中途放弃本局：先把本局统计折算入档，再清场
@@ -5363,6 +6008,13 @@
     G.enemies.length = 0; G.bullets.length = 0; G.ebullets.length = 0;
     G.parts.length = 0; G.dmgs.length = 0; G.pickups.length = 0; G.popups.length = 0;
     G.boss = null; G.bossEnt = null;
+    // v1.9：回到菜单时把背景恢复为默认（否则会在红色/白色的层背景上停留）
+    G.layerState.currentLayer = null;
+    G.layerState.currentLayerIndex = -1;
+    G.layerState.cycle = 1;
+    G.layerState.collapseAmount = 0;
+    G.layerState.transitionT = 0;
+    buildBackgroundForLayer('blue');
     camUpdate(0, true);
     showOverlay(overlayTitle);
     canvas.parentNode.classList.add('stopped');
@@ -5380,14 +6032,13 @@
     if (sub) {
       sub.textContent = G.mode === 'campaign'
         ? '剧情模式 · 共 ' + MODES.campaign.waves + ' 波，每 3 波以首领收尾'
-        : '无尽模式 · 波次无限递进，每 5 波以首领收尾';
+        : '无尽模式 · 共 100 波 / 5 层（缓存区 → 自毁倒计时），层内每 4-5 波以首领收尾';
     }
     showOverlay(overlayCls);
     canvas.parentNode.classList.add('stopped');
   }
   // 剧情：逐段推进，播完进入下一步
-  function startStory(key, next) {
-    var s = STORY[key];
+  function startStory(key, next) {    var s = STORY[key];
     storyState.key = key;
     storyState.step = 0;
     storyState.next = next;
@@ -5955,6 +6606,13 @@
     fire: fire, updateBullets: updateBullets, updateEnemies: updateEnemies, step: step,
     spawnParts: spawnParts, explode: explode, damageEnemy: damageEnemy,
     renderUpgradeCards: renderUpgradeCards, chooseUpgrade: chooseUpgrade,
+    // v1.9：无尽「层」系统
+    ENDLESS_MAX_WAVE: ENDLESS_MAX_WAVE, LAYERS: LAYERS, LAYER_AFFIXES: LAYER_AFFIXES,
+    CYCLE_BONUS: CYCLE_BONUS, getLayerForWave: getLayerForWave, bossEveryForWave: bossEveryForWave,
+    getLayerAffix: getLayerAffix, getLayerColor: getLayerColor, showSofiaLine: showSofiaLine,
+    buildBackgroundForLayer: buildBackgroundForLayer, drawLayerEffects: drawLayerEffects,
+    drawLayerProgress: drawLayerProgress, drawLayerTransition: drawLayerTransition,
+    endlessComplete: endlessComplete, LAYER_BG: LAYER_BG,
     overflowDiag: function () { return { talents: TALENTS.length, affixes: AFFIXES.length }; }
   };
 })();

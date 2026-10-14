@@ -1014,7 +1014,7 @@ neon.rollWaveAffixes(5);   // 无尽模式第 5 波是首领波
 assert(G.affixes.list.length === 0, '首领波不应有词缀（实际 ' + G.affixes.list.length + '）');
 let oneEachWave = true, sawTwo = false;
 for (let w = 4; w <= 40; w++) {
-  if (w % 5 === 0) continue;
+  if (w % neon.bossEveryForWave(w) === 0) continue;   // v1.9：首领波间隔由「层」决定（核心协议层为每 4 波）
   neon.rollWaveAffixes(w);
   const n = G.affixes.list.length;
   if (n < 1) { oneEachWave = false; console.error('FAIL: 第 ' + w + ' 波没有词缀'); break; }
@@ -2133,6 +2133,410 @@ function freshPlayer() { neon.startGame(); clearWorld(); return G.p; }
   assert(Math.abs((9000 - e.hp) - 120) < 1e-6, '1 秒后应结算 120 点（实际 ' + (9000 - e.hp) + '）');
   assert(e.delayT === 0 && e.delayMark === 0, '引爆后应清空标记');
   console.log('R16段 OK 延迟引爆：命中零伤害 → 标记 120% → 1 秒后一次性结算');
+}
+
+// ============================================================
+//  S 段：v1.9 无尽模式「层」系统
+// ============================================================
+const LAYERS = neon.LAYERS, LAYER_AFFIXES = neon.LAYER_AFFIXES;
+const DIFFS = neon.DIFFS;
+// 让 rollWaveAffixes 一定抽到指定层词缀：打桩 Math.random 的前几次调用
+function forceLayerAffix(wave, wantId) {
+  const pool = neon.getLayerForWave(wave).layer.affixes;
+  const len = pool.length;
+  const idx = Math.max(0, pool.indexOf(wantId));
+  const seq = [0.1, len > 0 ? (idx + 0.5) / len : 0.5, 0.99, 0.99];
+  const real = Math.random;
+  Math.random = function () { return seq.length ? seq.shift() : 0.99; };
+  try { neon.startWave(wave); } finally { Math.random = real; }
+}
+function layerPlayer() { const p = neon.startGame() || G.p; return G.p; }
+
+// S1 层定义表完整性
+{
+  const bad = [];
+  assert(LAYERS.length === 5, '层数应为 5（实际 ' + LAYERS.length + '）');
+  assert(neon.ENDLESS_MAX_WAVE === 100, '无尽模式总波数应为 100');
+  const themes = new Set();
+  let expectStart = 1;
+  for (const L of LAYERS) {
+    themes.add(L.theme);
+    if (L.range[0] !== expectStart || L.range[1] - L.range[0] !== 9) bad.push(L.id + ' 波次区间不连续（' + L.range + '）');
+    expectStart = L.range[1] + 1;
+    if (!L.nm || !L.lore || !L.theme) bad.push(L.id + ' 缺字段');
+    if (!Array.isArray(L.enemies) || L.enemies.length === 0) bad.push(L.id + ' 缺敌人构成');
+    for (const a of (L.affixes || [])) {
+      if (!LAYER_AFFIXES.some(x => x.id === a)) bad.push(L.id + ' 词缀池引用了不存在的 ' + a);
+    }
+  }
+  if (expectStart !== 51) bad.push('5 层未覆盖第 1-50 波');
+  if (themes.size !== 5) bad.push('主题数应为 5（实际 ' + themes.size + '）');
+  assert(LAYER_AFFIXES.length === 15, '层专属词缀应为 15 个（实际 ' + LAYER_AFFIXES.length + '）');
+  for (const a of LAYER_AFFIXES) {
+    if (!a.nm || !a.ds || !a.lore || !a.ico || a.cat !== 'layer') bad.push(a.id + ' 层词缀字段不完整');
+    if (['red', 'purple', 'green', 'gold', 'cyan'].indexOf(a.tone) < 0) bad.push(a.id + ' 倾向色非法');
+  }
+  assert(bad.length === 0, '层定义有问题：' + bad.join(' | '));
+  console.log('S1段 OK 层定义：5 层 × 10 波（1-50）· 5 套主题 · 15 个层专属词缀（含 lore）');
+}
+
+// S2 波次 -> 层 映射（含第二循环）
+{
+  const cases = [[1, 'cache', 1], [5, 'cache', 1], [10, 'cache', 1], [11, 'emotion', 1], [20, 'emotion', 1],
+    [21, 'memory', 1], [30, 'memory', 1], [31, 'core', 1], [40, 'core', 1], [41, 'selfdestruct', 1], [50, 'selfdestruct', 1],
+    [51, 'cache', 2], [61, 'emotion', 2], [75, 'memory', 2], [85, 'core', 2], [100, 'selfdestruct', 2]];
+  const bad = [];
+  for (const [w, id, cyc] of cases) {
+    const info = neon.getLayerForWave(w);
+    if (info.layer.id !== id) bad.push('第 ' + w + ' 波应属 ' + id + ' 实际 ' + info.layer.id);
+    if (info.cycle !== cyc) bad.push('第 ' + w + ' 波循环应为 ' + cyc + ' 实际 ' + info.cycle);
+    const wic = info.waveInCycle;
+    if (wic < 1 || wic > 50) bad.push('第 ' + w + ' 波层内序号越界 ' + wic);
+    if (cyc === 2 && wic !== w - 50) bad.push('第 ' + w + ' 波层内序号应为 ' + (w - 50) + ' 实际 ' + wic);
+  }
+  assert(bad.length === 0, '层判定有误：' + bad.join(' | '));
+  console.log('S2段 OK 波次→层映射：16 个抽样波次（含第 51/100 波第二循环）全部正确');
+}
+
+// S3 首领波间隔：核心协议层每 4 波，其余每 5 波，全代码统一走 bossEveryForWave()
+{
+  const bad = [];
+  G.mode = 'endless';
+  for (const w of [5, 10, 15, 20, 25, 30, 41, 45, 50, 55]) if (neon.bossEveryForWave(w) !== 5) bad.push(w + ' 波应为 5');
+  for (const w of [31, 32, 36, 40, 84, 88]) if (neon.bossEveryForWave(w) !== 4) bad.push(w + ' 波应为 4（核心协议）');
+  G.mode = 'campaign';
+  if (neon.bossEveryForWave(35) !== 5) bad.push('剧情模式不应受层影响');
+  G.mode = 'endless';
+  assert(bad.length === 0, '首领间隔有误：' + bad.join(' | '));
+  console.log('S3段 OK 首领间隔：核心协议层每 4 波 · 其余每 5 波 · 剧情模式不受影响');
+}
+
+// S4 层切换：切换时置过渡/重绘背景；第二循环开场回满血并给 2 秒无敌
+{
+  const bad = [];
+  const p = layerPlayer();
+  G.mode = 'endless';
+  neon.startWave(11);
+  if (G.layerState.currentLayer !== 'emotion') bad.push('未切到情绪池');
+  if (G.layerState.bgTheme !== 'purple') bad.push('背景未切到紫色（' + G.layerState.bgTheme + '）');
+  if (!(G.layerState.transitionT > 1.4)) bad.push('未触发 1.5 秒过渡（' + G.layerState.transitionT + '）');
+  // 同层内再起一波不应重复触发过渡
+  G.layerState.transitionT = 0;
+  neon.startWave(12);
+  if (G.layerState.transitionT !== 0) bad.push('同层内重复触发过渡');
+  // 第二循环开场
+  p.hp = 10;
+  neon.startWave(51);
+  if (G.layerState.cycle !== 2) bad.push('第 51 波未进入循环 2');
+  if (p.hp !== p.maxHp) bad.push('第二循环开场未回满血（' + p.hp + '/' + p.maxHp + '）');
+  if (!(p.inv >= 2)) bad.push('第二循环开场未给 2 秒无敌（' + p.inv + '）');
+  if (G.layerState.bgTheme !== 'blue') bad.push('第 51 波应回到缓存区背景（' + G.layerState.bgTheme + '）');
+  assert(bad.length === 0, '层切换有误：' + bad.join(' | '));
+  console.log('S4段 OK 层切换：过渡 1.5s · 同层不重复 · 第 51 波回满血 + 2s 无敌 · 背景跟随主题');
+}
+
+// S5 层敌人构成：按规格第二节
+{
+  const bad = [];
+  const kindsAt = w => {
+    const p = layerPlayer(); G.mode = 'endless';
+    Math.random = (() => { const r = Math.random; return r; })();
+    neon.startWave(w);
+    const set = new Set(G.spawnQ);
+    return set;
+  };
+  const k5 = kindsAt(5);
+  for (const k of ['tank', 'splitter']) if (k5.has(k)) bad.push('缓存区不应出现 ' + k);
+  const k15 = kindsAt(15);
+  if (!k15.has('tank') || !k15.has('splitter')) bad.push('情绪池应引入 tank / splitter');
+  const k25 = kindsAt(25);
+  if (!k25.has('orb')) bad.push('记忆库应引入 orb');
+  assert(bad.length === 0, '层敌人构成有误：' + bad.join(' | '));
+  console.log('S5段 OK 层敌人构成：缓存区基础三型 · 情绪池 +tank/splitter · 记忆库 +orb');
+}
+
+// S6 层词缀抽取：只从当前层池出、与全局词缀共存、首领波无词缀
+{
+  const bad = [];
+  let withLayer = 0;
+  const memoryPool = neon.getLayerForWave(23).layer.affixes;
+  if (G.mode !== 'endless') { bad.push('前置条件：G.mode 应为 endless（实际 ' + G.mode + '）'); G.mode = 'endless'; }
+  for (let i = 0; i < 200; i++) {
+    neon.rollWaveAffixes(23);          // 第 23 波：记忆库层且非首领波（25 波是首领波，词缀本就清空）
+    const list = G.affixes.list;
+    if (list.length === 0) { bad.push('第 23 波没有词缀'); break; }
+    const layerOnes = list.filter(id => neon.getLayerAffix(id));
+    if (layerOnes.length > 1) { bad.push('层词缀超过 1 个'); break; }
+    for (const id of layerOnes) {
+      if (memoryPool.indexOf(id) < 0) { bad.push('抽到了非本层词缀 ' + id); break; }
+      withLayer++;
+    }
+    if (!list.some(id => !neon.getLayerAffix(id))) { bad.push('全局波次词缀缺失'); break; }
+  }
+  // 首领波（核心协议层每 4 波）应清空
+  neon.rollWaveAffixes(32);
+  if (G.affixes.list.length !== 0) bad.push('第 32 波（核心协议首领波）不应有词缀');
+  if (withLayer < 60 || withLayer > 180) bad.push('层词缀出现率异常（' + withLayer + '/200）');
+  assert(bad.length === 0, '层词缀抽取有误：' + bad.join(' | '));
+  console.log('S6段 OK 层词缀抽取：200 轮 25 波全部只出记忆库池（' + withLayer +
+    '/200 含层词缀）· 全局词缀始终共存 · 首领波清空');
+}
+
+// S7 情绪池词缀：焦虑 / 愤怒 / 麻木 / 共鸣
+{
+  const bad = [];
+  const base = neon.ETYPES.chaser;
+  let p = layerPlayer(); G.mode = 'endless'; G.wave = 15; G.diff = 'normal';
+  // 焦虑：移速 +20%、攻击间隔 -15%、血量 -15%
+  G.affixes = { list: ['anxiety'], primary: 'anxiety', secondary: null };
+  G.enemies.length = 0;
+  let e = neon.spawnEnemy('chaser', 500, 500);
+  const scale15 = 1 + 14 * 0.17 * DIFFS.normal.escale;
+  if (Math.abs(e.spd - base.spd * (1 + 14 * 0.012) * 1.20) > 0.01) bad.push('焦虑：移速 +20% 未生效');
+  if (Math.abs(e.maxHp - base.hp * scale15 * 0.85) > 0.01) bad.push('焦虑：血量 -15% 未生效');
+  if (Math.abs(e.fireRate - base.fire * 0.85) > 1e-6) bad.push('焦虑：攻击间隔 -15% 未生效');
+  // 愤怒：接触伤害 +30%、移速 -20%
+  G.affixes = { list: ['anger'], primary: 'anger', secondary: null };
+  G.enemies.length = 0;
+  e = neon.spawnEnemy('chaser', 500, 500);
+  if (Math.abs(e.dmg - base.dmg * (1 + 14 * 0.05) * 1.30) > 0.01) bad.push('愤怒：伤害 +30% 未生效');
+  if (Math.abs(e.spd - base.spd * (1 + 14 * 0.012) * 0.80) > 0.01) bad.push('愤怒：移速 -20% 未生效');
+  // 麻木：血量 +25%，击杀分数 -40%
+  G.affixes = { list: ['numbness'], primary: 'numbness', secondary: null };
+  G.enemies.length = 0;
+  e = neon.spawnEnemy('chaser', 500, 500);
+  if (Math.abs(e.maxHp - base.hp * scale15 * 1.25) > 0.01) bad.push('麻木：血量 +25% 未生效');
+  p.bounty = 0; p.scoreMul = 1; p.nextWaveScoreMul = 1; G.combo = 1;
+  const scoreBefore = G.score;
+  neon.killEnemy(e);
+  const gainedNumb = G.score - scoreBefore;
+  G.affixes = { list: [], primary: null, secondary: null };
+  G.enemies.length = 0;
+  const e2 = neon.spawnEnemy('chaser', 500, 500);
+  G.combo = 1; p.bounty = 0;
+  const scoreBefore2 = G.score;
+  neon.killEnemy(e2);
+  const gainedFull = G.score - scoreBefore2;
+  if (Math.abs(gainedNumb / gainedFull - 0.60) > 0.06) bad.push('麻木：击杀分数应 ×0.60（实际 ' + (gainedNumb / gainedFull).toFixed(2) + '）');
+  // 共鸣：每 10 次击杀给随机存活敌人护盾
+  G.affixes = { list: ['resonance'], primary: 'resonance', secondary: null };
+  G.enemies.length = 0;
+  const survivor = neon.spawnEnemy('tank', 800, 800);
+  survivor.hp = survivor.maxHp = 1e6;
+  G.affixState.resonanceCount = 0;
+  for (let i = 0; i < 10; i++) { const v = neon.spawnEnemy('chaser', 500, 500); neon.killEnemy(v); }
+  if (!(survivor.shield > 0)) bad.push('共鸣：10 次击杀后未给存活敌人护盾');
+  assert(bad.length === 0, '情绪池词缀有误：' + bad.join(' | '));
+  console.log('S7段 OK 情绪池词缀：焦虑(速+20/血-15/间隔-15%) · 愤怒(+30%伤害/-20%速) · 麻木(+25%血/分数×0.6) · 共鸣(10 杀给盾)');
+}
+
+// S8 记忆库词缀：碎片化 / 回溯 / 残留 / 档案
+{
+  const bad = [];
+  const p = layerPlayer(); G.mode = 'endless'; G.wave = 25;
+  // 碎片化：击杀 +50 分
+  G.affixes = { list: ['fragment'], primary: 'fragment', secondary: null };
+  G.enemies.length = 0;
+  const eF = neon.spawnEnemy('chaser', 500, 500);
+  G.combo = 1; p.bounty = 0;
+  const s0 = G.score;
+  neon.killEnemy(eF);
+  const gained = G.score - s0;
+  const plain = neon.spawnEnemy('chaser', 500, 500);
+  G.affixes = { list: [], primary: null, secondary: null };
+  G.combo = 1;
+  const s1 = G.score;
+  neon.killEnemy(plain);
+  const baseGain = G.score - s1;
+  if (Math.abs(gained - (baseGain + 50)) > 1) bad.push('碎片化：应额外 +50 分（' + gained + ' vs ' + baseGain + '）');
+  // 回溯：15% 概率抵消本次伤害（触发时生命被还原到上一次记录值，表现为不降反升）
+  G.affixes = { list: ['backtrack'], primary: 'backtrack', secondary: null };
+  G.enemies.length = 0;
+  const eB = neon.spawnEnemy('chaser', 900, 900);
+  eB.hp = eB.maxHp = 1e9;
+  let negated = 0;
+  for (let i = 0; i < 400; i++) {
+    const before = eB.hp;
+    neon.damageEnemy(eB, 100, false, p);
+    if (eB.hp >= before) negated++;
+  }
+  const rate = negated / 400;
+  if (rate < 0.06 || rate > 0.28) bad.push('回溯触发率异常（' + (rate * 100).toFixed(1) + '%）');
+  // 残留：死亡处留下 3 秒伤害区，并对玩家造成伤害
+  G.affixes = { list: ['residue'], primary: 'residue', secondary: null };
+  G.affixState.residueZones = [];
+  G.enemies.length = 0;
+  const eR = neon.spawnEnemy('chaser', p.x + 10, p.y);
+  neon.killEnemy(eR);
+  if (G.affixState.residueZones.length !== 1) bad.push('残留：击杀后未生成伤害区');
+  p.hp = p.maxHp; p.inv = 0;
+  const hpBefore = p.hp;
+  for (let i = 0; i < 60; i++) neon.step(1 / 60);
+  if (!(p.hp < hpBefore)) bad.push('残留：站在伤害区内未掉血');
+  // 档案：精英本波名额 +1（第 23 波：非首领波）
+  G.wave = 23;
+  const realRandom = Math.random;
+  Math.random = () => 0.01;                       // 必出精英 + 追加第二只，便于比较
+  G.affixes = { list: [], primary: null, secondary: null };
+  neon.eliteResetWave(); neon.eliteRollWave();
+  const allowanceNoArchive = G.eliteState.waveAllowance;
+  G.affixes = { list: ['archive'], primary: 'archive', secondary: null };
+  neon.eliteResetWave(); neon.eliteRollWave();
+  const allowanceArchive = G.eliteState.waveAllowance;
+  Math.random = realRandom;
+  if (allowanceArchive - allowanceNoArchive !== 1) {
+    bad.push('档案：本波精英名额应 +1（' + allowanceNoArchive + ' -> ' + allowanceArchive + '）');
+  }
+  assert(bad.length === 0, '记忆库词缀有误：' + bad.join(' | '));
+  console.log('S8段 OK 记忆库词缀：碎片化(+50 分) · 回溯(触发率 ' + (rate * 100).toFixed(1) + '%) · 残留(持续伤害区) · 档案(精英 +1)');
+}
+
+// S9 核心协议词缀：干扰 / 限流 / 回响
+{
+  const bad = [];
+  const p = layerPlayer(); G.mode = 'endless'; G.wave = 35; G.state = 'playing'; G.deadT = 0;
+  // 干扰：冲刺冷却 +40%
+  p.dashCd = 0;
+  G.affixes = { list: ['interfere'], primary: 'interfere', secondary: null };
+  neon.doDash();
+  if (Math.abs(p.dashCd - p.dashCdMax * 1.40) > 1e-6) bad.push('干扰：冲刺冷却应为 ×1.40（实际 ' + p.dashCd + '）');
+  // 限流：子弹速度 -25%
+  G.affixes = { list: ['throttle'], primary: 'throttle', secondary: null };
+  G.bullets.length = 0;
+  neon.fire();
+  const b = G.bullets[0];
+  const spd = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+  if (Math.abs(spd - p.bspeed * 0.75) > p.bspeed * 0.05) bad.push('限流：子弹速度应 ×0.75（实际 ' + (spd / p.bspeed).toFixed(2) + '）');
+  // 回响：反射 10% 伤害回玩家
+  G.affixes = { list: ['echo_dmg'], primary: 'echo_dmg', secondary: null };
+  G.enemies.length = 0;
+  const eE = neon.spawnEnemy('chaser', 900, 900);
+  eE.hp = eE.maxHp = 1e9;
+  p.hp = 500; p.inv = 0; p.shield = 0; p.aegisCharge = 0;
+  const expect = 100 * 0.10 * DIFFS[G.diff].edmg;
+  const before = p.hp;
+  neon.damageEnemy(eE, 100, false, p);
+  if (Math.abs((before - p.hp) - expect) > 0.01) bad.push('回响：应反射 ' + expect.toFixed(2) + '（实际 ' + (before - p.hp).toFixed(2) + '）');
+  assert(bad.length === 0, '核心协议词缀有误：' + bad.join(' | '));
+  console.log('S9段 OK 核心协议词缀：干扰(冲刺 CD ×1.40) · 限流(子弹速度 ×0.75) · 回响(反射 10% = ' + expect.toFixed(1) + ' 点)');
+}
+
+// S10 自毁倒计时词缀：崩解 / 倒计时 / 崩溃 / 终末
+{
+  const bad = [];
+  const p = layerPlayer(); G.mode = 'endless';
+  // 崩解：敌人死亡时爆炸并波及附近敌人
+  G.affixes = { list: ['disintegrate'], primary: 'disintegrate', secondary: null };
+  G.enemies.length = 0;
+  const victim = neon.spawnEnemy('chaser', 900, 900);
+  const neighbor = neon.spawnEnemy('chaser', 930, 900);
+  neighbor.hp = neighbor.maxHp = 5000;
+  victim.dmg = 40;
+  neon.killEnemy(victim);
+  if (!(neighbor.hp < 5000)) bad.push('崩解：死亡爆炸未波及邻近敌人');
+  // 倒计时：60 秒后全场敌人加速 50%
+  G.affixes = { list: ['countdown'], primary: 'countdown', secondary: null };
+  G.affixState.countdownT = 60; G.affixState.countdownActive = true;
+  G.wave = 43; G.waveState = 'fighting'; G.spawnQ.length = 0; G.enemies.length = 0;
+  const slow = neon.spawnEnemy('chaser', 900, 900);
+  slow.hp = slow.maxHp = 1e9;
+  const spdBefore = slow.spd;
+  G.affixState.countdownT = 0.05;
+  p.hp = 1e6; p.maxHp = 1e6;
+  for (let i = 0; i < 10; i++) neon.step(1 / 60);
+  if (G.affixState.countdownActive) bad.push('倒计时：超时后应关闭计时');
+  if (Math.abs(slow.spd - spdBefore * 1.5) > 1e-6) bad.push('倒计时：超时后敌人移速应 ×1.5');
+  // 崩溃：进场 20%，有词缀时 +5%/波，上限 30%；边界取 max(shrink, collapse)
+  G.layerState.currentLayer = 'selfdestruct';       // 已在自毁层：再起一波不会重置塌陷量
+  G.layerState.collapseAmount = 0.20;
+  forceLayerAffix(43, 'collapse');                  // 第 43 波：自毁层且非首领波（45/50 是首领波）
+  if (!neon.hasAffix('collapse')) bad.push('崩溃：未抽到该词缀（打桩失效）');
+  if (Math.abs(G.layerState.collapseAmount - 0.25) > 1e-6) bad.push('崩溃：每波应 +5%（实际 ' + G.layerState.collapseAmount + '）');
+  for (let i = 0; i < 5; i++) forceLayerAffix(43, 'collapse');
+  if (Math.abs(G.layerState.collapseAmount - 0.30) > 1e-6) bad.push('崩溃：上限应为 30%（实际 ' + G.layerState.collapseAmount + '）');
+  G.affixes = { list: [], primary: null, secondary: null };
+  const fb = neon.getFieldBounds();
+  const inset = Math.min(neon.W, neon.H) * 0.30;
+  if (Math.abs(fb.x0 - inset) > 0.5) bad.push('崩溃：边界未按 30% 内缩');
+  G.affixes = { list: ['shrink'], primary: 'shrink', secondary: null };
+  const fb2 = neon.getFieldBounds();
+  if (Math.abs(fb2.x0 - Math.min(neon.W, neon.H) * 0.30) > 0.5) bad.push('收缩与崩溃应取较大值而非叠加');
+  // 终末：敌人血量 -30%，数量 +60%
+  G.layerState.collapseAmount = 0;
+  forceLayerAffix(43, 'finality');
+  if (!neon.hasAffix('finality')) bad.push('终末：未抽到该词缀（打桩失效）');
+  G.enemies.length = 0;
+  const eFin = neon.spawnEnemy('chaser', 500, 500);
+  const scale43 = 1 + 42 * 0.17 * DIFFS[G.diff].escale;
+  if (Math.abs(eFin.maxHp - neon.ETYPES.chaser.hp * scale43 * 0.70) > 0.01) bad.push('终末：敌人血量应 -30%');
+  assert(bad.length === 0, '自毁层词缀有误：' + bad.join(' | '));
+  console.log('S10段 OK 自毁层词缀：崩解(爆炸) · 倒计时(60s 后 ×1.5 速) · 崩溃(20%→30% 取 max) · 终末(血 -30%)');
+}
+
+// S11 第二循环增幅：血量 ×1.8 / 伤害 ×1.4 / 移速 ×1.15 / 分数 ×1.5
+{
+  const bad = [];
+  const base = neon.ETYPES.chaser;
+  G.mode = 'endless'; G.layerState.cycle = 1; G.wave = 60; G.diff = 'normal';
+  const p = layerPlayer();
+  G.layerState.cycle = 1; G.wave = 60;
+  G.affixes = { list: [], primary: null, secondary: null };
+  G.enemies.length = 0;
+  const e1 = neon.spawnEnemy('chaser', 500, 500);
+  G.affixes = { list: [], primary: null, secondary: null };
+  G.enemies.length = 0;
+  G.layerState.cycle = 2;
+  const e2 = neon.spawnEnemy('chaser', 500, 500);
+  const cb = neon.CYCLE_BONUS[2];
+  if (Math.abs(e2.maxHp / e1.maxHp - cb.hp) > 1e-6) bad.push('循环 2 血量应 ×' + cb.hp + '（实际 ' + (e2.maxHp / e1.maxHp).toFixed(2) + '）');
+  if (Math.abs(e2.dmg / e1.dmg - cb.dmg) > 1e-6) bad.push('循环 2 伤害应 ×' + cb.dmg);
+  if (Math.abs(e2.spd / e1.spd - cb.spd) > 1e-6) bad.push('循环 2 移速应 ×' + cb.spd);
+  // 分数 ×1.5
+  G.combo = 1; p.bounty = 0;
+  G.layerState.cycle = 1; G.enemies.length = 0;
+  const s1 = neon.spawnEnemy('chaser', 500, 500);
+  const s0 = G.score; neon.killEnemy(s1); const g1 = G.score - s0;
+  G.combo = 1; G.enemies.length = 0;
+  G.layerState.cycle = 2;
+  const s2 = neon.spawnEnemy('chaser', 500, 500);
+  const s0b = G.score; neon.killEnemy(s2); const g2 = G.score - s0b;
+  // 分数 ×1.5（按四舍五入后的实际增量比较，避免 11 × 1.5 = 16.5 → 17 的取整误差）
+  const expectScore = Math.round(g1 * cb.scoreMul);
+  if (Math.abs(g2 - expectScore) > 1) bad.push('循环 2 分数应 ×' + cb.scoreMul +
+    '（实际 ' + g1 + ' -> ' + g2 + '，期望 ' + expectScore + '）');
+  G.layerState.cycle = 1;
+  assert(bad.length === 0, '第二循环增幅有误：' + bad.join(' | '));
+  console.log('S11段 OK 第二循环：血量 ×1.8 · 伤害 ×1.4 · 移速 ×1.15 · 分数 ×1.5');
+}
+
+// S12 第 100 波通关 + 剧情碎片 + 背景主题表
+{
+  const bad = [];
+  // 背景主题表覆盖 5 层
+  for (const L of LAYERS) {
+    neon.buildBackgroundForLayer(L.theme);
+    if (G.layerState.bgTheme !== L.theme) bad.push('背景主题未生效：' + L.theme);
+    if (!neon.LAYER_BG[L.theme]) bad.push('LAYER_BG 缺主题 ' + L.theme);
+  }
+  neon.buildBackgroundForLayer('blue');
+  // 剧情碎片（层 4 每 5 波）
+  G.mode = 'endless';
+  G.popups.length = 0;
+  neon.showSofiaLine(35);
+  const sofia = G.popups.some(pp => String(pp.t).indexOf('索菲亚') >= 0);
+  if (!sofia) bad.push('剧情碎片未投放（第 35 波）');
+  // 第 100 波清空 = 通关
+  const p = layerPlayer(); G.mode = 'endless'; G.wave = 100;
+  neon.startWave(100);
+  G.enemies.length = 0; G.spawnQ.length = 0; G.ebullets.length = 0;
+  G.waveState = 'clear'; G.waveDelay = 0.01;
+  G.state = 'playing';
+  for (let i = 0; i < 10 && G.state !== 'over'; i++) neon.step(1 / 60);
+  if (G.state !== 'over') bad.push('第 100 波清空后应进入结算（实际 ' + G.state + '）');
+  const fin = document.getElementById('finTitle');
+  if (!fin || String(fin.innerHTML).indexOf('通') < 0) bad.push('结算面板未显示通关文案');
+  assert(bad.length === 0, '通关/剧情/背景有误：' + bad.join(' | '));
+  console.log('S12段 OK 5 套背景主题可切换 · 层 4 剧情碎片 · 第 100 波清空进入通关结算');
 }
 
 // N11 复制按钮：Clipboard API 缺失 / 抛错 / Promise 被拒绝时都必须回退 execCommand，且结果如实反馈

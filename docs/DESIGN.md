@@ -280,15 +280,75 @@ WEAPON_EXCLUSIVE = [{ ids:['boomerang','bounce','linger'], max:2 },   // 弹道�
 
 ---
 
-## 11. 验证工具
+## 11. 无尽模式「层」系统（v1.9）
+
+### 结构
+100 波 = **2 个循环 × 5 个层**，每层 10 波。`LAYERS` 表定义 `{ id, nm, range, theme, lore, affixes, enemies, [bossEvery/eliteChance/storyEvery/isFinal] }`：
+
+| 层 | 波次 | 主题 | 敌人构成 | 专属词缀 |
+|---|---|---|---|---|
+| 缓存区 cache | 1-10 | blue | chaser/darter/shooter | 无 |
+| 情绪池 emotion | 11-20 | purple | +tank/splitter | anxiety/anger/numbness/resonance |
+| 记忆库 memory | 21-30 | gold | +orb（`eliteChance: 0.15`） | fragment/backtrack/residue/archive |
+| 核心协议 core | 31-40 | red | 全部（`bossEvery: 4`、`storyEvery: 5`） | interfere/throttle/echo_dmg |
+| 自毁倒计时 selfdestruct | 41-50 | white | 全部（`eliteChance: 1.0`、`isFinal`） | disintegrate/countdown/collapse/finality |
+
+`getLayerForWave(wave)` 返回 `{layer, index, cycle, waveInCycle}`：第 51-100 波为循环 2，`waveInCycle = wave - 50`，因此第二循环自动复用同一套层定义。
+
+### 层切换与过渡（不新增 G.state）
+`startWave()` 开头先判定层，若与 `layerState.currentLayer` 不同则：更新层索引与循环、重置 `collapseAmount`（自毁层置 0.20）、`transitionT = 1.5`、`buildBackgroundForLayer(theme)`；循环 2 的开场额外回满血并给 2 秒无敌。
+
+过渡动画画在**视口层**（`drawLayerTransition()`，在 `render()` 末尾）：0-0.4s 渐暗 → 0.4-1.1s 层名 + 世界观 + 波次范围 → 1.1-1.5s 渐亮。**规格建议新增 `G.state='layerTransition'`，这里没有采用**：改为在帧循环里判断 `layerState.transitionT > 0` 就跳过 `step()`、只推进 `G.time` 与相机。好处是完全不碰既有状态机（`pause/dead/over/event/upgrade` 的转换断言保持有效），代价是过渡期间 `G.state` 仍是 `playing`（做 UI 判断时要注意）。第 1 波不播过渡：否则点「开始战斗」后会先冻结 1.5 秒，像没反应。
+
+### 背景系统
+- **静态底图**：`buildBackgroundForLayer(theme)` 重建 2240×1560 的 `bgCanvas` —— 主题径向渐变 + 2 处柔光团 + 确定性伪随机颗粒（金色层额外用"碎片"形状）。5 套配色存于 `LAYER_BG`（含网格线、边框、四角装饰与柔光颜色）。
+- **动态层**：`drawLayerEffects()` 接在 `drawGrid()` 末尾（世界坐标）：蓝=极缓慢数据流细线、紫=3 层扩散波纹 + 2 处涡流、金=46 片飘落碎片、红=双心跳脉冲环 + 四周告警带、白=间歇白闪 + 滚动扫描线。只用一个 `wctx.save/restore`，无每帧分配。
+- **网格与边框跟随主题**（`LAYER_BG[theme]`），层与层之间一眼可辨；回到标题页时 `showTitle()` 会把背景复位为蓝色。
+
+### 层词缀与全局词缀共存
+`rollWaveAffixes()` 重写为三步：① 无尽模式下 **60%** 概率从**当前层**的 `affixes` 池抽 1 个层词缀；② 必抽 1 个全局波次词缀（排除已抽层词缀及其冲突项）；③ 第 8 波起 40% 概率第二个全局词缀。首领波与第 3 波之前仍然清空。因此**每波最多 1 个层词缀 + 1 个全局词缀 + 1 个附加全局词缀**。
+
+`getAffix()` 同时搜索 `AFFIXES` 与 `LAYER_AFFIXES`，所以词缀常驻条（`drawAffixBar`）与波次开幕词（`showAffixIntro`）自动兼容层词缀；层词缀的 `lore` 是规格缺失、这里补齐的（开幕词要用）。
+
+### 15 个层词缀的对接点
+| 词缀 | 生效位置 |
+|---|---|
+| 焦虑 / 愤怒 / 麻木 / 终末 | `applyAffixToEnemy()`（生成时改 spd/dmg/hp/fireRate）、`killEnemy()`（麻木分数 ×0.6） |
+| 共鸣 | `killEnemy()` 计数，每 10 杀给随机存活敌人 30% 最大生命护盾 |
+| 碎片化 | `killEnemy()` 直接 +50 分（本版不做记忆碎片拾取物，规格亦如此建议） |
+| 回溯 | `damageEnemy()` 开头：记录上次位置/血量，15% 概率回退并抵消本次伤害（首领免疫） |
+| 残留 | `killEnemy()` 推入 `affixState.residueZones`；`step()` 里结算（半径 60、3 秒、每秒 2% 最大生命） |
+| 档案 | `eliteRollWave()` 名额 +1、`trySpawnElite()` 上限 +1 |
+| 干扰 | `doDash()`：`dashCd = dashCdMax × 1.40` |
+| 限流 | `fire()`：子弹初速 ×0.75 |
+| 回响 | `damageEnemy()`：`damagePlayer(amount × 0.10)`（走正常受击流程，护盾/无敌帧照常生效） |
+| 崩解 | `killEnemy()`：`explode(80, dmg×0.6)` 并波及玩家 |
+| 倒计时 | `startWave()` 置 60 秒；`step()` 超时后全员 `spd ×1.5`（不硬性失败） |
+| 崩溃 | `rollWaveAffixes()` 递增 `layerState.collapseAmount`；`getFieldBounds()` 与「收缩」取 max |
+
+### 第二循环与终局
+`CYCLE_BONUS[2] = { hp:1.8, dmg:1.4, spd:1.15, eliteChance:0.20, scoreMul:1.5 }`：血量/伤害/移速在 `spawnEnemy()` 末尾叠加，精英率在 `eliteRollWave()` 叠加，分数在 `killEnemy()` 叠加。第 100 波清空后 `updateWaves()` 调用 `endlessComplete()` → 复用胜利结算（`showResult(true)`，无尽模式显示「通 关」）。
+
+**`bossEveryForWave(wave)` 必须被三处共用**：`startWave()` 判首领、`rollWaveAffixes()` 首领波清空、`eliteRollWave()` 首领波不刷。核心协议层改成每 4 波后，若漏改任何一处就会出现「第 34 波既出首领又刷精英」或「首领波却带词缀」。
+
+### 与规格的三处偏差（都有明确理由）
+1. **崩溃进场 20%、上限 30%**（规格：每波 5%、最多 20%）。几何原因：视口 1600×1000 只覆盖 2240×1560 战场的中央，墙面内缩必须超过约 18%（≈280px）才会进入画面——按规格的 5%→20% 递增，墙面几乎永远在视野之外，玩家看不到"墙"。
+2. **层 3 精英率 +15%**：规格正文写「记忆库精英怪出现概率提升」，但 `LAYERS` 数据里只有层 5 的 `eliteChance`；按正文补上 `eliteChance: 0.15`。
+3. **第 1 波不播过渡**、**不新增 `G.state`**（见上）。
+
+---
+
+## 12. 验证工具
 
 `dev/` 下的脚本不需要任何第三方依赖：
 
-- **`smoke-test.js`**：桩化 DOM 与 Canvas（`vm` 模块），模拟真实帧推进，80+ 项断言、42000+ 帧。覆盖 UI 流程、状态机、位移积分、相机精度、卡池门槛、首领机制、天赋树、词缀、精英怪、事件房、卡牌回退，v1.7 存档系统（N1–N11），以及 v1.8 的 14 张武器变异运行时行为（R1–R16）。
-- **CDP 脚本**（`r6`–`r11` 等）：用 Chrome DevTools Protocol 在**真实浏览器**里操作，包括模拟鼠标 hover、读取计算字号、逐帧测量出现率、跨页面刷新验证持久化。比 Playwright 更可靠（headless 的 virtual-time 与命名管道限制会干扰截图和 rAF）。
-- **`r11-check.js`**（v1.8）：武器变异真机验收（卡表 / 冲突过滤 / 卡面「变异」标签 / 14 张逐张实战不崩 / 关键变异的运行时事实 / 回退兼容 / 不影响存档）。
+- **`smoke-test.js`**：桩化 DOM 与 Canvas（`vm` 模块），模拟真实帧推进，100+ 项断言、42000+ 帧。覆盖 UI 流程、状态机、位移积分、相机精度、卡池门槛、首领机制、天赋树、词缀、精英怪、事件房、卡牌回退，v1.7 存档系统（N1–N11），v1.8 的 14 张武器变异（R1–R16），以及 v1.9 的层系统（S1–S12）。
+- **CDP 脚本**（`r6`–`r12` 等）：用 Chrome DevTools Protocol 在**真实浏览器**里操作，包括模拟鼠标 hover、读取计算字号、逐帧测量出现率、像素级比对背景、跨页面刷新验证持久化。比 Playwright 更可靠（headless 的 virtual-time 与命名管道限制会干扰截图和 rAF）。
+- **`r12-check.js`**（v1.9）：层系统真机验收（层判定 / 5 套背景的像素级切换证据 / 动态层动画 / 过渡冻结 / 层词缀实战 / 100 波通关）。
+- **`r11-check.js`**（v1.8）：武器变异真机验收（卡表 / 冲突过滤 / 卡面「变异」标签 / 14 张逐张实战 / 回退兼容 / 不影响存档）。
 - **`r10-check.js`**（v1.7）：存档系统真机验收，19 项独立检查。
-- **`ui-check.js`**：在 3 种窗口尺寸下为职业页 / 剧情页 / 存档管理页 / 导入确认弹窗出图，检查矮窗口下内容不被裁切。
+- **`layer-shots.js`**（v1.9）：为 5 个层各截一张真实战斗画面，供人工审查背景（CDP 驱动，避免 `--virtual-time-budget` 在首帧前截图的抖动）。
+- **`ui-check.js`**：在 3 种窗口尺寸下为职业页 / 剧情页 / 存档管理页 / 变异卡面 / 导入确认弹窗出图，检查矮窗口下内容不被裁切。
 - **`http-check.js`**：验证 `http://` 加载方式下运行正常（需先 `node serve.js`）。
 
 Chrome flags 用这组比较稳：
@@ -299,7 +359,7 @@ Chrome flags 用这组比较稳：
 
 ---
 
-## 12. 开发过程中修掉的问题（摘要）
+## 13. 开发过程中修掉的问题（摘要）
 
 | 问题 | 根因 | 修复 |
 |---|---|---|
@@ -321,3 +381,6 @@ Chrome flags 用这组比较稳：
 | 「复制」提示成功但剪贴板为空 | `clipboard.writeText()` 的 Promise 被拒绝时未处理，直接返回成功 | 改为异步等待 + 拒绝后回退 `execCommand` / 离屏 textarea，失败如实提示；导出框点击自动全选 |
 | 点「从文件导入」后整页卡死（自动化里） | 原生文件选择框是模态的，会阻塞渲染进程 | CDP 侧 `Page.setInterceptFileChooserDialog` 拦截（`dev/r10-check.js`） |
 | 变异卡在无头测试里「打不中」 | 直接调 `updateBullets()` 时空间哈希 `G.grid` 为空（只有 `step()` 会填充） | 测试脚手架自行重建网格（非产品缺陷，见 `smoke-test.js` 的 R 段） |
+| 核心协议层「第 32 波没有词缀」 | 层 4 的首领间隔是 4 波，而旧断言/旧代码按 5 波判断 | 抽出 `bossEveryForWave()`，`startWave`/`rollWaveAffixes`/`eliteRollWave` 三处统一（见第 11 节） |
+| 自毁层看不到「崩溃」的墙 | 20% 以内缩量都落在相机视野之外（视口 1600×1000 vs 战场 2240×1560） | 进场即 20%、上限放开到 30%，墙面立刻进画面 |
+| 背景出图偶发黑屏 | `--virtual-time-budget` 有时在首帧渲染前就截图 | `layer-shots.js` 改用 CDP：注入局面 → 真实等待 1.2s → `Page.captureScreenshot` |

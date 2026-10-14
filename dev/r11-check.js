@@ -704,16 +704,19 @@ window.__t.watchErrors();
     });
 
     // ===== 10) 版本标记 =====
-    await step('10) 版本标记（#overlayTitle .sub 含 v1.8）', async () => {
+    //  Lead 于 v1.9 调整：原断言写死「v1.8」，版本号一升级就会误报；改为「存在 vX.Y 版本标记」，
+    //  这样 r11 作为回归脚本可以长期复用（功能断言仍然全部针对 v1.8 的变异系统）。
+    await step('10) 版本标记（#overlayTitle .sub 含 vX.Y）', async () => {
       const r = await ev(`(function () {
         var el = document.querySelector('#overlayTitle .sub');
         var txt = el ? String(el.textContent || '') : null;
-        return { txt: txt, has: !!txt && txt.indexOf('v1.8') >= 0 };
+        var m = txt ? txt.match(/v\\d+\\.\\d+/) : null;
+        return { txt: txt, ver: m ? m[0] : null };
       })()`);
-      console.log('   · #overlayTitle .sub = ' + JSON.stringify(r.txt));
+      console.log('   · #overlayTitle .sub = ' + JSON.stringify(r.txt) + ' · 识别版本 = ' + r.ver);
       expect('10) 版本标记', [
         ['#overlayTitle .sub 存在', r.txt !== null, r.txt === null ? 'element missing' : 'ok'],
-        ['文本含 v1.8', r.has === true, r.txt]
+        ['文本含 vX.Y 版本标记', !!r.ver, r.txt]
       ]);
     });
   } catch (e) {
